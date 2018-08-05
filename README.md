@@ -102,6 +102,10 @@ for more details, see [nginx guide](https://github.com/F-Stack/f-stack/blob/mast
     route add -net 0.0.0.0 gw <gateway> dev veth0
     # route add -net ...  # other route rules
 
+## Binary Release
+
+We provide a  f-stack-binary-release package that you can use F-Stack directly without compiling. For more details, see [Binary_Release_Quick_Start](https://github.com/F-Stack/f-stack/blob/master/doc/F-Stack_Binary_Release_Quick_Start.md).
+
 ## Nginx Testing Result
 
 Test environment
@@ -116,19 +120,24 @@ Nginx uses linux kernel's default config, all soft interrupts are working in the
 
 Nginx si means modify the smp_affinity of every IRQ, so that the decision to service an interrupt with a particular CPU is made at the hardware level, with no intervention from the kernel.
 
+Nginx Reuseport means enable "reuseport" in `nginx.conf`.
+
 Nginx_FStack's 600 cache bytes' body was returned directly in nginx.conf.
 
 All of these test cases use CPUs' physical cores.
 
 
 CPS (Connection:close, Small data packet)  test result
-![](http://i.imgur.com/PvCRmXR.png)
+![](CPS.png)
+
+CPS_Reuseport (Connection:close, Small data packet)  test result, This test case runs in a different test environment
+![](CPS_Reuseport.png)
 
 RPS (Connection:Keep-Alive, Small data packet) test data
-![](http://i.imgur.com/CTDPx3a.png)
+![](RPS.png)
 
 Bandwidth (Connection:Keep-Alive, 3.7k bytes data packet) test data
-![](http://i.imgur.com/1ZM6yT9.png)
+![](Bandwidth.png)
 
 ## Licenses
 See [LICENSE](LICENSE)
