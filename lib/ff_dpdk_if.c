@@ -419,18 +419,21 @@ create_ring(const char *name, unsigned count, int socket_id, unsigned flags)
 {
     struct rte_ring *ring;
 
-    if (name == NULL)
-        return NULL;
-
-    /* If already create, just attached it */
-    if (likely((ring = rte_ring_lookup(name)) != NULL))
-        return ring;
+    if (name == NULL) {
+        rte_exit(EXIT_FAILURE, "create ring failed, no name!\n");
+    }
 
     if (rte_eal_process_type() == RTE_PROC_PRIMARY) {
-        return rte_ring_create(name, count, socket_id, flags);
+        ring = rte_ring_create(name, count, socket_id, flags);
     } else {
-        return rte_ring_lookup(name);
+        ring = rte_ring_lookup(name);
     }
+
+    if (ring == NULL) {
+        rte_exit(EXIT_FAILURE, "create ring:%s failed!\n", name);
+    }
+
+    return ring;
 }
 
 static int
@@ -1339,6 +1342,12 @@ ff_dpdk_if_send(struct ff_dpdk_if_context *ctx, void *m,
             }
         }
 
+        if (prev != NULL) {
+            prev->next = cur;
+        }
+        head->nb_segs++;
+
+        prev = cur;
         void *data = rte_pktmbuf_mtod(cur, void*);
         int len = total > RTE_MBUF_DEFAULT_DATAROOM ? RTE_MBUF_DEFAULT_DATAROOM : total;
         int ret = ff_mbuf_copydata(m, data, off, len);
@@ -1348,15 +1357,10 @@ ff_dpdk_if_send(struct ff_dpdk_if_context *ctx, void *m,
             return -1;
         }
 
-        if (prev != NULL) {
-            prev->next = cur;
-        }
-        prev = cur;
 
         cur->data_len = len;
         off += len;
         total -= len;
-        head->nb_segs++;
         cur = NULL;
     }
 
