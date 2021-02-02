@@ -1,3 +1,6 @@
+..  SPDX-License-Identifier: BSD-3-Clause
+    Copyright(c) 2015 Intel Corporation.
+
 How to get best performance with NICs on Intel platforms
 ========================================================
 
@@ -64,7 +67,7 @@ This aligns with the previous output which showed that each channel has one memo
 Network Interface Card Requirements
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-Use a `DPDK supported <http://core.dpdk.org/supported/>`_ high end NIC such as the Intel XL710 40GbE.
+Use a `DPDK supported <https://core.dpdk.org/supported/>`_ high end NIC such as the Intel XL710 40GbE.
 
 Make sure each NIC has been flashed the latest version of NVM/firmware.
 
@@ -90,17 +93,15 @@ BIOS Settings
 The following are some recommendations on BIOS settings. Different platforms will have different BIOS naming
 so the following is mainly for reference:
 
-#. Before starting consider resetting all BIOS settings to their default.
+#. Establish the steady state for the system, consider reviewing BIOS settings desired for best performance characteristic e.g. optimize for performance or energy efficiency.
 
-#. Disable all power saving options such as: Power performance tuning, CPU P-State, CPU C3 Report and CPU C6 Report.
+#. Match the BIOS settings to the needs of the application you are testing.
 
-#. Select **Performance** as the CPU Power and Performance policy.
+#. Typically, **Performance** as the CPU Power and Performance policy is a reasonable starting point.
 
-#. Disable Turbo Boost to ensure the performance scaling increases with the number of cores.
+#. Consider using Turbo Boost to increase the frequency on cores.
 
-#. Set memory frequency to the highest available number, NOT auto.
-
-#. Disable all virtualization options when you test the physical function of the NIC, and turn on ``VT-d`` if you wants to use VFIO.
+#. Disable all virtualization options when you test the physical function of the NIC, and turn on VT-d if you wants to use VFIO.
 
 
 Linux boot command line
@@ -135,7 +136,7 @@ Configurations before running DPDK
 
       # Build DPDK target.
       cd dpdk_folder
-      make install T=x86_64-native-linuxapp-gcc -j
+      make install T=x86_64-native-linux-gcc -j
 
       # Get the hugepage size.
       awk '/Hugepagesize/ {print $2}' /proc/meminfo
@@ -152,7 +153,7 @@ Configurations before running DPDK
       # Mount to the specific folder.
       mount -t hugetlbfs nodev /mnt/huge
 
-2. Check the CPU layout using using the DPDK ``cpu_layout`` utility:
+2. Check the CPU layout using the DPDK ``cpu_layout`` utility:
 
    .. code-block:: console
 

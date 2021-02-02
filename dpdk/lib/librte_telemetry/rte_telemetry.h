@@ -9,7 +9,12 @@
 
 /**
  * @file
- * RTE Telemetry
+ *
+ * RTE Telemetry.
+ *
+ * @warning
+ * @b EXPERIMENTAL:
+ * All functions in this file may be changed or removed without prior notice.
  *
  * The telemetry library provides a method to retrieve statistics from
  * DPDK by sending a JSON encoded message over a socket. DPDK will send
@@ -31,7 +36,8 @@
  * @return
  *  -EALREADY if Telemetry is already initialised.
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_telemetry_init(void);
 
 /**
@@ -45,7 +51,8 @@ rte_telemetry_init(void);
  * @return
  *  -EPERM on failure
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_telemetry_cleanup(void);
 
 /**
@@ -60,7 +67,8 @@ rte_telemetry_cleanup(void);
  * @return
  *  -1 on failure when the test has failed
  */
-int32_t __rte_experimental
+__rte_experimental
+int32_t
 rte_telemetry_selftest(void);
 
 #endif

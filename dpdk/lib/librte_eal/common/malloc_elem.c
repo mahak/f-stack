@@ -23,6 +23,17 @@
 #include "malloc_elem.h"
 #include "malloc_heap.h"
 
+/*
+ * If debugging is enabled, freed memory is set to poison value
+ * to catch buggy programs. Otherwise, freed memory is set to zero
+ * to avoid having to zero in zmalloc
+ */
+#ifdef RTE_MALLOC_DEBUG
+#define MALLOC_POISON	       0x6b
+#else
+#define MALLOC_POISON	       0
+#endif
+
 size_t
 malloc_elem_find_max_iova_contig(struct malloc_elem *elem, size_t align)
 {
@@ -114,7 +125,8 @@ malloc_elem_find_max_iova_contig(struct malloc_elem *elem, size_t align)
  */
 void
 malloc_elem_init(struct malloc_elem *elem, struct malloc_heap *heap,
-		struct rte_memseg_list *msl, size_t size)
+		struct rte_memseg_list *msl, size_t size,
+		struct malloc_elem *orig_elem, size_t orig_size)
 {
 	elem->heap = heap;
 	elem->msl = msl;
@@ -124,6 +136,8 @@ malloc_elem_init(struct malloc_elem *elem, struct malloc_heap *heap,
 	elem->state = ELEM_FREE;
 	elem->size = size;
 	elem->pad = 0;
+	elem->orig_elem = orig_elem;
+	elem->orig_size = orig_size;
 	set_header(elem);
 	set_trailer(elem);
 }
@@ -157,7 +171,7 @@ malloc_elem_insert(struct malloc_elem *elem)
 		next_elem = NULL;
 		heap->last = elem;
 	} else {
-		/* the new memory is somewhere inbetween start and end */
+		/* the new memory is somewhere between start and end */
 		uint64_t dist_from_start, dist_from_end;
 
 		dist_from_end = RTE_PTR_DIFF(heap->last, elem);
@@ -282,7 +296,8 @@ split_elem(struct malloc_elem *elem, struct malloc_elem *split_pt)
 	const size_t old_elem_size = (uintptr_t)split_pt - (uintptr_t)elem;
 	const size_t new_elem_size = elem->size - old_elem_size;
 
-	malloc_elem_init(split_pt, elem->heap, elem->msl, new_elem_size);
+	malloc_elem_init(split_pt, elem->heap, elem->msl, new_elem_size,
+			 elem->orig_elem, elem->orig_size);
 	split_pt->prev = elem;
 	split_pt->next = next_elem;
 	if (next_elem)
@@ -292,6 +307,11 @@ split_elem(struct malloc_elem *elem, struct malloc_elem *split_pt)
 	elem->next = split_pt;
 	elem->size = old_elem_size;
 	set_trailer(elem);
+	if (elem->pad) {
+		/* Update inner padding inner element size. */
+		elem = RTE_PTR_ADD(elem, elem->pad);
+		elem->size = old_elem_size - elem->pad;
+	}
 }
 
 /*
@@ -321,14 +341,18 @@ static int
 next_elem_is_adjacent(struct malloc_elem *elem)
 {
 	return elem->next == RTE_PTR_ADD(elem, elem->size) &&
-			elem->next->msl == elem->msl;
+			elem->next->msl == elem->msl &&
+			(!internal_config.match_allocations ||
+			 elem->orig_elem == elem->next->orig_elem);
 }
 
 static int
 prev_elem_is_adjacent(struct malloc_elem *elem)
 {
 	return elem == RTE_PTR_ADD(elem->prev, elem->prev->size) &&
-			elem->prev->msl == elem->msl;
+			elem->prev->msl == elem->msl &&
+			(!internal_config.match_allocations ||
+			 elem->orig_elem == elem->prev->orig_elem);
 }
 
 /*
@@ -358,14 +382,14 @@ malloc_elem_free_list_index(size_t size)
 		return 0;
 
 	/* Find next power of 2 >= size. */
-	log2 = sizeof(size) * 8 - __builtin_clzl(size-1);
+	log2 = sizeof(size) * 8 - __builtin_clzl(size - 1);
 
 	/* Compute freelist index, based on log2(size). */
 	index = (log2 - MALLOC_MINSIZE_LOG2 + MALLOC_LOG2_INCREMENT - 1) /
-	        MALLOC_LOG2_INCREMENT;
+			MALLOC_LOG2_INCREMENT;
 
-	return index <= RTE_HEAP_NUM_FREELISTS-1?
-	        index: RTE_HEAP_NUM_FREELISTS-1;
+	return index <= RTE_HEAP_NUM_FREELISTS - 1 ?
+			index : RTE_HEAP_NUM_FREELISTS - 1;
 }
 
 /*
@@ -463,6 +487,10 @@ join_elem(struct malloc_elem *elem1, struct malloc_elem *elem2)
 	else
 		elem1->heap->last = elem1;
 	elem1->next = next;
+	if (elem1->pad) {
+		struct malloc_elem *inner = RTE_PTR_ADD(elem1, elem1->pad);
+		inner->size = elem1->size - elem1->pad;
+	}
 }
 
 struct malloc_elem *
@@ -486,7 +514,7 @@ malloc_elem_join_adjacent_free(struct malloc_elem *elem)
 		join_elem(elem, elem->next);
 
 		/* erase header, trailer and pad */
-		memset(erase, 0, erase_len);
+		memset(erase, MALLOC_POISON, erase_len);
 	}
 
 	/*
@@ -510,7 +538,7 @@ malloc_elem_join_adjacent_free(struct malloc_elem *elem)
 		join_elem(new_elem, elem);
 
 		/* erase header, trailer and pad */
-		memset(erase, 0, erase_len);
+		memset(erase, MALLOC_POISON, erase_len);
 
 		elem = new_elem;
 	}
@@ -541,7 +569,8 @@ malloc_elem_free(struct malloc_elem *elem)
 	/* decrease heap's count of allocated elements */
 	elem->heap->alloc_count--;
 
-	memset(ptr, 0, data_len);
+	/* poison memory */
+	memset(ptr, MALLOC_POISON, data_len);
 
 	return elem;
 }

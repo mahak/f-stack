@@ -11,9 +11,6 @@
  * @note
  * Driver facing APIs for a raw device. These are not to be called directly by
  * any application.
- *
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
  */
 
 #ifdef __cplusplus
@@ -499,7 +496,7 @@ typedef int (*rawdev_firmware_unload_t)(struct rte_rawdev *dev);
  * @return
  *   Return 0 on success
  */
-typedef int (*rawdev_selftest_t)(void);
+typedef int (*rawdev_selftest_t)(uint16_t dev_id);
 
 /** Rawdevice operations function pointer table */
 struct rte_rawdev_ops {
@@ -568,7 +565,9 @@ struct rte_rawdev_ops {
  * @param name
  *   Unique identifier name for each device
  * @param dev_private_size
- *   Private data allocated within rte_rawdev object.
+ *   Size of private data memory allocated within rte_rawdev object.
+ *   Set to 0 to disable internal memory allocation and allow for
+ *   self-allocation.
  * @param socket_id
  *   Socket to allocate resources on.
  * @return

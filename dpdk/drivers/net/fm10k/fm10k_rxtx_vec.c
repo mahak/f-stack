@@ -359,8 +359,15 @@ fm10k_rx_queue_release_mbufs_vec(struct fm10k_rx_queue *rxq)
 		return;
 
 	/* free all mbufs that are valid in the ring */
-	for (i = rxq->next_dd; i != rxq->rxrearm_start; i = (i + 1) & mask)
-		rte_pktmbuf_free_seg(rxq->sw_ring[i]);
+	if (rxq->rxrearm_nb == 0) {
+		for (i = 0; i < rxq->nb_desc; i++)
+			if (rxq->sw_ring[i] != NULL)
+				rte_pktmbuf_free_seg(rxq->sw_ring[i]);
+	} else {
+		for (i = rxq->next_dd; i != rxq->rxrearm_start;
+				i = (i + 1) & mask)
+			rte_pktmbuf_free_seg(rxq->sw_ring[i]);
+	}
 	rxq->rxrearm_nb = rxq->nb_desc;
 
 	/* set all entries to NULL */
@@ -638,18 +645,15 @@ fm10k_reassemble_packets(struct fm10k_rx_queue *rxq,
 	return pkt_idx;
 }
 
-/*
- * vPMD receive routine that reassembles scattered packets
+/**
+ * vPMD receive routine that reassembles single burst of 32 scattered packets
  *
  * Notice:
  * - don't support ol_flags for rss and csum err
- * - nb_pkts > RTE_FM10K_MAX_RX_BURST, only scan RTE_FM10K_MAX_RX_BURST
- *   numbers of DD bit
  */
-uint16_t
-fm10k_recv_scattered_pkts_vec(void *rx_queue,
-				struct rte_mbuf **rx_pkts,
-				uint16_t nb_pkts)
+static uint16_t
+fm10k_recv_scattered_burst_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			       uint16_t nb_pkts)
 {
 	struct fm10k_rx_queue *rxq = rx_queue;
 	uint8_t split_flags[RTE_FM10K_MAX_RX_BURST] = {0};
@@ -682,6 +686,32 @@ fm10k_recv_scattered_pkts_vec(void *rx_queue,
 	}
 	return i + fm10k_reassemble_packets(rxq, &rx_pkts[i], nb_bufs - i,
 		&split_flags[i]);
+}
+
+/**
+ * vPMD receive routine that reassembles scattered packets.
+ */
+uint16_t
+fm10k_recv_scattered_pkts_vec(void *rx_queue, struct rte_mbuf **rx_pkts,
+			      uint16_t nb_pkts)
+{
+	uint16_t retval = 0;
+
+	while (nb_pkts > RTE_FM10K_MAX_RX_BURST) {
+		uint16_t burst;
+
+		burst = fm10k_recv_scattered_burst_vec(rx_queue,
+						       rx_pkts + retval,
+						       RTE_FM10K_MAX_RX_BURST);
+		retval += burst;
+		nb_pkts -= burst;
+		if (burst < RTE_FM10K_MAX_RX_BURST)
+			return retval;
+	}
+
+	return retval + fm10k_recv_scattered_burst_vec(rx_queue,
+						       rx_pkts + retval,
+						       nb_pkts);
 }
 
 static const struct fm10k_txq_ops vec_txq_ops = {

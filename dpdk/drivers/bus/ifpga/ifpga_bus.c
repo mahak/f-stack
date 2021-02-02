@@ -24,6 +24,7 @@
 #include <rte_kvargs.h>
 #include <rte_alarm.h>
 #include <rte_string_fns.h>
+#include <rte_debug.h>
 
 #include "rte_rawdev.h"
 #include "rte_rawdev_pmd.h"
@@ -68,6 +69,19 @@ ifpga_find_afu_dev(const struct rte_rawdev *rdev,
 		if (afu_dev &&
 			afu_dev->rawdev == rdev &&
 			!ifpga_afu_id_cmp(&afu_dev->id, afu_id))
+			return afu_dev;
+	}
+	return NULL;
+}
+
+struct rte_afu_device *
+rte_ifpga_find_afu_by_name(const char *name)
+{
+	struct rte_afu_device *afu_dev = NULL;
+
+	TAILQ_FOREACH(afu_dev, &ifpga_afu_dev_list, next) {
+		if (afu_dev &&
+			!strcmp(afu_dev->device.name, name))
 			return afu_dev;
 	}
 	return NULL;

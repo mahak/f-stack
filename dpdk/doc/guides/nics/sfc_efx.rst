@@ -1,30 +1,9 @@
-..  BSD LICENSE
-    Copyright (c) 2016 Solarflare Communications Inc.
+..  SPDX-License-Identifier: BSD-3-Clause
+    Copyright (c) 2016-2019 Solarflare Communications Inc.
     All rights reserved.
 
     This software was jointly developed between OKTET Labs (under contract
     for Solarflare) and Solarflare Communications, Inc.
-
-    Redistribution and use in source and binary forms, with or without
-    modification, are permitted provided that the following conditions are met:
-
-    1. Redistributions of source code must retain the above copyright notice,
-       this list of conditions and the following disclaimer.
-    2. Redistributions in binary form must reproduce the above copyright notice,
-       this list of conditions and the following disclaimer in the documentation
-       and/or other materials provided with the distribution.
-
-    THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
-    AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
-    THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-    PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
-    CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-    EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-    PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS;
-    OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY,
-    WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR
-    OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
-    EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Solarflare libefx-based Poll Mode Driver
 ========================================
@@ -66,7 +45,7 @@ SFC EFX PMD has support for:
 
 - Allmulticast mode
 
-- TCP segmentation offload (TSO)
+- TCP segmentation offload (TSO) including VXLAN and GENEVE encapsulated
 
 - Multicast MAC filter
 
@@ -82,6 +61,8 @@ SFC EFX PMD has support for:
 
 - Scattered Rx DMA for packet that are larger that a single Rx descriptor
 
+- Receive queue interrupts
+
 - Deferred receive and transmit queue start
 
 - Transmit VLAN insertion (if running firmware variant supports it)
@@ -95,8 +76,6 @@ Non-supported Features
 ----------------------
 
 The features not yet supported include:
-
-- Receive queue interrupts
 
 - Priority-based flow control
 
@@ -207,6 +186,8 @@ Supported actions:
 
 Validating flow rules depends on the firmware variant.
 
+The :ref:`flow_isolated_mode` is supported.
+
 Ethernet destination individual/group match
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
@@ -314,7 +295,7 @@ whitelist option like "-w 02:00.0,arg1=value1,...".
 Case-insensitive 1/y/yes/on or 0/n/no/off may be used to specify
 boolean parameters value.
 
-- ``rx_datapath`` [auto|efx|ef10|ef10_esps] (default **auto**)
+- ``rx_datapath`` [auto|efx|ef10|ef10_essb] (default **auto**)
 
   Choose receive datapath implementation.
   **auto** allows the driver itself to make a choice based on firmware
@@ -323,7 +304,7 @@ boolean parameters value.
   **ef10** chooses EF10 (SFN7xxx, SFN8xxx, X2xxx) native datapath which is
   more efficient than libefx-based and provides richer packet type
   classification.
-  **ef10_esps** chooses SFNX2xxx equal stride packed stream datapath
+  **ef10_essb** chooses SFNX2xxx equal stride super-buffer datapath
   which may be used on DPDK firmware variant only
   (see notes about its limitations above).
 

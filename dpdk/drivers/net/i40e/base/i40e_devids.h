@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2018
+ * Copyright(c) 2001-2020 Intel Corporation
  */
 
 #ifndef _I40E_DEVIDS_H_
@@ -22,9 +22,9 @@
 #define I40E_DEV_ID_10G_BASE_T4		0x1589
 #define I40E_DEV_ID_25G_B		0x158A
 #define I40E_DEV_ID_25G_SFP28		0x158B
-#ifdef CARLSVILLE_HW
+#define I40E_DEV_ID_X710_N3000      0x0CF8
+#define I40E_DEV_ID_XXV710_N3000	0x0D58
 #define I40E_DEV_ID_10G_BASE_T_BC	0x15FF
-#endif
 #if defined(INTEGRATED_VF) || defined(VF_DRIVER) || defined(I40E_NDIS_SUPPORT)
 #define I40E_DEV_ID_VF			0x154C
 #define I40E_DEV_ID_VF_HV		0x1571

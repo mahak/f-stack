@@ -1,11 +1,116 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2017-2018 Intel Corporation
+ * Copyright(c) 2017-2019 Intel Corporation
  */
 
 #ifndef _QAT_SYM_CAPABILITIES_H_
 #define _QAT_SYM_CAPABILITIES_H_
 
 #define QAT_BASE_GEN1_SYM_CAPABILITIES					\
+	{	/* SHA1 */						\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,	\
+			{.auth = {					\
+				.algo = RTE_CRYPTO_AUTH_SHA1,		\
+				.block_size = 64,			\
+				.key_size = {				\
+					.min = 0,			\
+					.max = 0,			\
+					.increment = 0			\
+				},					\
+				.digest_size = {			\
+					.min = 1,			\
+					.max = 20,			\
+					.increment = 1			\
+				},					\
+				.iv_size = { 0 }			\
+			}, }						\
+		}, }							\
+	},								\
+	{	/* SHA224 */						\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,	\
+			{.auth = {					\
+				.algo = RTE_CRYPTO_AUTH_SHA224,		\
+				.block_size = 64,			\
+				.key_size = {				\
+					.min = 0,			\
+					.max = 0,			\
+					.increment = 0			\
+				},					\
+				.digest_size = {			\
+					.min = 1,			\
+					.max = 28,			\
+					.increment = 1			\
+				},					\
+				.iv_size = { 0 }			\
+			}, }						\
+		}, }							\
+	},								\
+	{	/* SHA256 */						\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,	\
+			{.auth = {					\
+				.algo = RTE_CRYPTO_AUTH_SHA256,		\
+				.block_size = 64,			\
+				.key_size = {				\
+					.min = 0,			\
+					.max = 0,			\
+					.increment = 0			\
+				},					\
+				.digest_size = {			\
+					.min = 1,			\
+					.max = 32,			\
+					.increment = 1			\
+				},					\
+				.iv_size = { 0 }			\
+			}, }						\
+		}, }							\
+	},								\
+	{	/* SHA384 */						\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,	\
+			{.auth = {					\
+				.algo = RTE_CRYPTO_AUTH_SHA384,		\
+				.block_size = 128,			\
+				.key_size = {				\
+					.min = 0,			\
+					.max = 0,			\
+					.increment = 0			\
+				},					\
+				.digest_size = {			\
+					.min = 1,			\
+					.max = 48,			\
+					.increment = 1			\
+				},					\
+				.iv_size = { 0 }			\
+			}, }						\
+		}, }							\
+	},								\
+	{	/* SHA512 */						\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_AUTH,	\
+			{.auth = {					\
+				.algo = RTE_CRYPTO_AUTH_SHA512,		\
+				.block_size = 128,			\
+				.key_size = {				\
+					.min = 0,			\
+					.max = 0,			\
+					.increment = 0			\
+				},					\
+				.digest_size = {			\
+					.min = 1,			\
+					.max = 64,			\
+					.increment = 1			\
+				},					\
+				.iv_size = { 0 }			\
+			}, }						\
+		}, }							\
+	},								\
 	{	/* SHA1 HMAC */						\
 		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
 		{.sym = {						\
@@ -145,8 +250,8 @@
 					.increment = 0			\
 				},					\
 				.digest_size = {			\
-					.min = 16,			\
-					.max = 16,			\
+					.min = 12,			\
+					.max = 12,			\
 					.increment = 0			\
 				},					\
 				.aad_size = { 0 },			\
@@ -167,7 +272,7 @@
 					.increment = 0			\
 				},					\
 				.digest_size = {			\
-					.min = 12,			\
+					.min = 4,			\
 					.max = 16,			\
 					.increment = 4			\
 				}					\
@@ -295,6 +400,26 @@
 					.min = 16,			\
 					.max = 32,			\
 					.increment = 8			\
+				},					\
+				.iv_size = {				\
+					.min = 16,			\
+					.max = 16,			\
+					.increment = 0			\
+				}					\
+			}, }						\
+		}, }							\
+	},								\
+	{	/* AES XTS */					\
+		.op = RTE_CRYPTO_OP_TYPE_SYMMETRIC,			\
+		{.sym = {						\
+			.xform_type = RTE_CRYPTO_SYM_XFORM_CIPHER,	\
+			{.cipher = {					\
+				.algo = RTE_CRYPTO_CIPHER_AES_XTS,	\
+				.block_size = 16,			\
+				.key_size = {				\
+					.min = 32,			\
+					.max = 64,			\
+					.increment = 32			\
 				},					\
 				.iv_size = {				\
 					.min = 16,			\

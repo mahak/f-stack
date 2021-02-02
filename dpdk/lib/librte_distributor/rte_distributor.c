@@ -8,17 +8,16 @@
 #include <rte_mbuf.h>
 #include <rte_memory.h>
 #include <rte_cycles.h>
-#include <rte_compat.h>
 #include <rte_memzone.h>
 #include <rte_errno.h>
 #include <rte_string_fns.h>
 #include <rte_eal_memconfig.h>
 #include <rte_pause.h>
+#include <rte_tailq.h>
 
-#include "rte_distributor_private.h"
 #include "rte_distributor.h"
-#include "rte_distributor_v20.h"
-#include "rte_distributor_v1705.h"
+#include "rte_distributor_single.h"
+#include "distributor_private.h"
 
 TAILQ_HEAD(rte_dist_burst_list, rte_distributor);
 
@@ -32,7 +31,7 @@ EAL_REGISTER_TAILQ(rte_dist_burst_tailq)
 /**** Burst Packet APIs called by workers ****/
 
 void
-rte_distributor_request_pkt_v1705(struct rte_distributor *d,
+rte_distributor_request_pkt(struct rte_distributor *d,
 		unsigned int worker_id, struct rte_mbuf **oldpkt,
 		unsigned int count)
 {
@@ -42,14 +41,17 @@ rte_distributor_request_pkt_v1705(struct rte_distributor *d,
 	volatile int64_t *retptr64;
 
 	if (unlikely(d->alg_type == RTE_DIST_ALG_SINGLE)) {
-		rte_distributor_request_pkt_v20(d->d_v20,
-			worker_id, oldpkt[0]);
+		rte_distributor_request_pkt_single(d->d_single,
+			worker_id, count ? oldpkt[0] : NULL);
 		return;
 	}
 
 	retptr64 = &(buf->retptr64[0]);
-	/* Spin while handshake bits are set (scheduler clears it) */
-	while (unlikely(*retptr64 & RTE_DISTRIB_GET_BUF)) {
+	/* Spin while handshake bits are set (scheduler clears it).
+	 * Sync with worker on GET_BUF flag.
+	 */
+	while (unlikely(__atomic_load_n(retptr64, __ATOMIC_ACQUIRE)
+			& (RTE_DISTRIB_GET_BUF | RTE_DISTRIB_RETURN_BUF))) {
 		rte_pause();
 		uint64_t t = rte_rdtsc()+100;
 
@@ -65,26 +67,23 @@ rte_distributor_request_pkt_v1705(struct rte_distributor *d,
 	for (i = count; i < RTE_DIST_BURST_SIZE; i++)
 		buf->retptr64[i] = 0;
 
-	/* Set Return bit for each packet returned */
+	/* Set VALID_BUF bit for each packet returned */
 	for (i = count; i-- > 0; )
 		buf->retptr64[i] =
 			(((int64_t)(uintptr_t)(oldpkt[i])) <<
-			RTE_DISTRIB_FLAG_BITS) | RTE_DISTRIB_RETURN_BUF;
+			RTE_DISTRIB_FLAG_BITS) | RTE_DISTRIB_VALID_BUF;
 
 	/*
 	 * Finally, set the GET_BUF  to signal to distributor that cache
 	 * line is ready for processing
+	 * Sync with distributor to release retptrs
 	 */
-	*retptr64 |= RTE_DISTRIB_GET_BUF;
+	__atomic_store_n(retptr64, *retptr64 | RTE_DISTRIB_GET_BUF,
+			__ATOMIC_RELEASE);
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_request_pkt, _v1705, 17.05);
-MAP_STATIC_SYMBOL(void rte_distributor_request_pkt(struct rte_distributor *d,
-		unsigned int worker_id, struct rte_mbuf **oldpkt,
-		unsigned int count),
-		rte_distributor_request_pkt_v1705);
 
 int
-rte_distributor_poll_pkt_v1705(struct rte_distributor *d,
+rte_distributor_poll_pkt(struct rte_distributor *d,
 		unsigned int worker_id, struct rte_mbuf **pkts)
 {
 	struct rte_distributor_buffer *buf = &d->bufs[worker_id];
@@ -93,12 +92,18 @@ rte_distributor_poll_pkt_v1705(struct rte_distributor *d,
 	unsigned int i;
 
 	if (unlikely(d->alg_type == RTE_DIST_ALG_SINGLE)) {
-		pkts[0] = rte_distributor_poll_pkt_v20(d->d_v20, worker_id);
+		pkts[0] = rte_distributor_poll_pkt_single(d->d_single,
+			worker_id);
 		return (pkts[0]) ? 1 : 0;
 	}
 
-	/* If bit is set, return */
-	if (buf->bufptr64[0] & RTE_DISTRIB_GET_BUF)
+	/* If any of below bits is set, return.
+	 * GET_BUF is set when distributor hasn't sent any packets yet
+	 * RETURN_BUF is set when distributor must retrieve in-flight packets
+	 * Sync with distributor to acquire bufptrs
+	 */
+	if (__atomic_load_n(&(buf->bufptr64[0]), __ATOMIC_ACQUIRE)
+		& (RTE_DISTRIB_GET_BUF | RTE_DISTRIB_RETURN_BUF))
 		return -1;
 
 	/* since bufptr64 is signed, this should be an arithmetic shift */
@@ -110,21 +115,19 @@ rte_distributor_poll_pkt_v1705(struct rte_distributor *d,
 	}
 
 	/*
-	 * so now we've got the contents of the cacheline into an  array of
+	 * so now we've got the contents of the cacheline into an array of
 	 * mbuf pointers, so toggle the bit so scheduler can start working
 	 * on the next cacheline while we're working.
+	 * Sync with distributor on GET_BUF flag. Release bufptrs.
 	 */
-	buf->bufptr64[0] |= RTE_DISTRIB_GET_BUF;
+	__atomic_store_n(&(buf->bufptr64[0]),
+		buf->bufptr64[0] | RTE_DISTRIB_GET_BUF, __ATOMIC_RELEASE);
 
 	return count;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_poll_pkt, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_poll_pkt(struct rte_distributor *d,
-		unsigned int worker_id, struct rte_mbuf **pkts),
-		rte_distributor_poll_pkt_v1705);
 
 int
-rte_distributor_get_pkt_v1705(struct rte_distributor *d,
+rte_distributor_get_pkt(struct rte_distributor *d,
 		unsigned int worker_id, struct rte_mbuf **pkts,
 		struct rte_mbuf **oldpkt, unsigned int return_count)
 {
@@ -132,8 +135,8 @@ rte_distributor_get_pkt_v1705(struct rte_distributor *d,
 
 	if (unlikely(d->alg_type == RTE_DIST_ALG_SINGLE)) {
 		if (return_count <= 1) {
-			pkts[0] = rte_distributor_get_pkt_v20(d->d_v20,
-				worker_id, oldpkt[0]);
+			pkts[0] = rte_distributor_get_pkt_single(d->d_single,
+				worker_id, return_count ? oldpkt[0] : NULL);
 			return (pkts[0]) ? 1 : 0;
 		} else
 			return -EINVAL;
@@ -152,14 +155,9 @@ rte_distributor_get_pkt_v1705(struct rte_distributor *d,
 	}
 	return count;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_get_pkt, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_get_pkt(struct rte_distributor *d,
-		unsigned int worker_id, struct rte_mbuf **pkts,
-		struct rte_mbuf **oldpkt, unsigned int return_count),
-		rte_distributor_get_pkt_v1705);
 
 int
-rte_distributor_return_pkt_v1705(struct rte_distributor *d,
+rte_distributor_return_pkt(struct rte_distributor *d,
 		unsigned int worker_id, struct rte_mbuf **oldpkt, int num)
 {
 	struct rte_distributor_buffer *buf = &d->bufs[worker_id];
@@ -167,29 +165,53 @@ rte_distributor_return_pkt_v1705(struct rte_distributor *d,
 
 	if (unlikely(d->alg_type == RTE_DIST_ALG_SINGLE)) {
 		if (num == 1)
-			return rte_distributor_return_pkt_v20(d->d_v20,
+			return rte_distributor_return_pkt_single(d->d_single,
 				worker_id, oldpkt[0]);
+		else if (num == 0)
+			return rte_distributor_return_pkt_single(d->d_single,
+				worker_id, NULL);
 		else
 			return -EINVAL;
 	}
 
+	/* Spin while handshake bits are set (scheduler clears it).
+	 * Sync with worker on GET_BUF flag.
+	 */
+	while (unlikely(__atomic_load_n(&(buf->retptr64[0]), __ATOMIC_RELAXED)
+			& (RTE_DISTRIB_GET_BUF | RTE_DISTRIB_RETURN_BUF))) {
+		rte_pause();
+		uint64_t t = rte_rdtsc()+100;
+
+		while (rte_rdtsc() < t)
+			rte_pause();
+	}
+
+	/* Sync with distributor to acquire retptrs */
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
 	for (i = 0; i < RTE_DIST_BURST_SIZE; i++)
 		/* Switch off the return bit first */
-		buf->retptr64[i] &= ~RTE_DISTRIB_RETURN_BUF;
+		buf->retptr64[i] = 0;
 
 	for (i = num; i-- > 0; )
 		buf->retptr64[i] = (((int64_t)(uintptr_t)oldpkt[i]) <<
-			RTE_DISTRIB_FLAG_BITS) | RTE_DISTRIB_RETURN_BUF;
+			RTE_DISTRIB_FLAG_BITS) | RTE_DISTRIB_VALID_BUF;
 
-	/* set the GET_BUF but even if we got no returns */
-	buf->retptr64[0] |= RTE_DISTRIB_GET_BUF;
+	/* Use RETURN_BUF on bufptr64 to notify distributor that
+	 * we won't read any mbufs from there even if GET_BUF is set.
+	 * This allows distributor to retrieve in-flight already sent packets.
+	 */
+	__atomic_or_fetch(&(buf->bufptr64[0]), RTE_DISTRIB_RETURN_BUF,
+		__ATOMIC_ACQ_REL);
+
+	/* set the RETURN_BUF on retptr64 even if we got no returns.
+	 * Sync with distributor on RETURN_BUF flag. Release retptrs.
+	 * Notify distributor that we don't request more packets any more.
+	 */
+	__atomic_store_n(&(buf->retptr64[0]),
+		buf->retptr64[0] | RTE_DISTRIB_RETURN_BUF, __ATOMIC_RELEASE);
 
 	return 0;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_return_pkt, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_return_pkt(struct rte_distributor *d,
-		unsigned int worker_id, struct rte_mbuf **oldpkt, int num),
-		rte_distributor_return_pkt_v1705);
 
 /**** APIs called on distributor core ***/
 
@@ -237,13 +259,13 @@ find_match_scalar(struct rte_distributor *d,
 
 		for (j = 0; j < RTE_DIST_BURST_SIZE ; j++)
 			for (w = 0; w < RTE_DIST_BURST_SIZE; w++)
-				if (d->in_flight_tags[i][j] == data_ptr[w]) {
+				if (d->in_flight_tags[i][w] == data_ptr[j]) {
 					output_ptr[j] = i+1;
 					break;
 				}
 		for (j = 0; j < RTE_DIST_BURST_SIZE; j++)
 			for (w = 0; w < RTE_DIST_BURST_SIZE; w++)
-				if (bl->tags[j] == data_ptr[w]) {
+				if (bl->tags[w] == data_ptr[j]) {
 					output_ptr[j] = i+1;
 					break;
 				}
@@ -254,6 +276,59 @@ find_match_scalar(struct rte_distributor *d,
 	 * each non-zero value containing the worker ID on which the
 	 * corresponding flow is pinned to.
 	 */
+}
+
+/*
+ * When worker called rte_distributor_return_pkt()
+ * and passed RTE_DISTRIB_RETURN_BUF handshake through retptr64,
+ * distributor must retrieve both inflight and backlog packets assigned
+ * to the worker and reprocess them to another worker.
+ */
+static void
+handle_worker_shutdown(struct rte_distributor *d, unsigned int wkr)
+{
+	struct rte_distributor_buffer *buf = &(d->bufs[wkr]);
+	/* double BURST size for storing both inflights and backlog */
+	struct rte_mbuf *pkts[RTE_DIST_BURST_SIZE * 2];
+	unsigned int pkts_count = 0;
+	unsigned int i;
+
+	/* If GET_BUF is cleared there are in-flight packets sent
+	 * to worker which does not require new packets.
+	 * They must be retrieved and assigned to another worker.
+	 */
+	if (!(__atomic_load_n(&(buf->bufptr64[0]), __ATOMIC_ACQUIRE)
+		& RTE_DISTRIB_GET_BUF))
+		for (i = 0; i < RTE_DIST_BURST_SIZE; i++)
+			if (buf->bufptr64[i] & RTE_DISTRIB_VALID_BUF)
+				pkts[pkts_count++] = (void *)((uintptr_t)
+					(buf->bufptr64[i]
+						>> RTE_DISTRIB_FLAG_BITS));
+
+	/* Make following operations on handshake flags on bufptr64:
+	 * - set GET_BUF to indicate that distributor can overwrite buffer
+	 *     with new packets if worker will make a new request.
+	 * - clear RETURN_BUF to unlock reads on worker side.
+	 */
+	__atomic_store_n(&(buf->bufptr64[0]), RTE_DISTRIB_GET_BUF,
+		__ATOMIC_RELEASE);
+
+	/* Collect backlog packets from worker */
+	for (i = 0; i < d->backlog[wkr].count; i++)
+		pkts[pkts_count++] = (void *)((uintptr_t)
+			(d->backlog[wkr].pkts[i] >> RTE_DISTRIB_FLAG_BITS));
+
+	d->backlog[wkr].count = 0;
+
+	/* Clear both inflight and backlog tags */
+	for (i = 0; i < RTE_DIST_BURST_SIZE; i++) {
+		d->in_flight_tags[wkr][i] = 0;
+		d->backlog[wkr].tags[i] = 0;
+	}
+
+	/* Recursive call */
+	if (pkts_count > 0)
+		rte_distributor_process(d, pkts, pkts_count);
 }
 
 
@@ -272,21 +347,39 @@ handle_returns(struct rte_distributor *d, unsigned int wkr)
 	unsigned int count = 0;
 	unsigned int i;
 
-	if (buf->retptr64[0] & RTE_DISTRIB_GET_BUF) {
+	/* Sync on GET_BUF flag. Acquire retptrs. */
+	if (__atomic_load_n(&(buf->retptr64[0]), __ATOMIC_ACQUIRE)
+		& (RTE_DISTRIB_GET_BUF | RTE_DISTRIB_RETURN_BUF)) {
 		for (i = 0; i < RTE_DIST_BURST_SIZE; i++) {
-			if (buf->retptr64[i] & RTE_DISTRIB_RETURN_BUF) {
+			if (buf->retptr64[i] & RTE_DISTRIB_VALID_BUF) {
 				oldbuf = ((uintptr_t)(buf->retptr64[i] >>
 					RTE_DISTRIB_FLAG_BITS));
 				/* store returns in a circular buffer */
 				store_return(oldbuf, d, &ret_start, &ret_count);
 				count++;
-				buf->retptr64[i] &= ~RTE_DISTRIB_RETURN_BUF;
+				buf->retptr64[i] &= ~RTE_DISTRIB_VALID_BUF;
 			}
 		}
 		d->returns.start = ret_start;
 		d->returns.count = ret_count;
-		/* Clear for the worker to populate with more returns */
-		buf->retptr64[0] = 0;
+
+		/* If worker requested packets with GET_BUF, set it to active
+		 * otherwise (RETURN_BUF), set it to not active.
+		 */
+		d->activesum -= d->active[wkr];
+		d->active[wkr] = !!(buf->retptr64[0] & RTE_DISTRIB_GET_BUF);
+		d->activesum += d->active[wkr];
+
+		/* If worker returned packets without requesting new ones,
+		 * handle all in-flights and backlog packets assigned to it.
+		 */
+		if (unlikely(buf->retptr64[0] & RTE_DISTRIB_RETURN_BUF))
+			handle_worker_shutdown(d, wkr);
+
+		/* Clear for the worker to populate with more returns.
+		 * Sync with distributor on GET_BUF flag. Release retptrs.
+		 */
+		__atomic_store_n(&(buf->retptr64[0]), 0, __ATOMIC_RELEASE);
 	}
 	return count;
 }
@@ -306,10 +399,18 @@ release(struct rte_distributor *d, unsigned int wkr)
 	struct rte_distributor_buffer *buf = &(d->bufs[wkr]);
 	unsigned int i;
 
-	while (!(d->bufs[wkr].bufptr64[0] & RTE_DISTRIB_GET_BUF))
-		rte_pause();
-
 	handle_returns(d, wkr);
+	if (unlikely(!d->active[wkr]))
+		return 0;
+
+	/* Sync with worker on GET_BUF flag */
+	while (!(__atomic_load_n(&(d->bufs[wkr].bufptr64[0]), __ATOMIC_ACQUIRE)
+		& RTE_DISTRIB_GET_BUF)) {
+		handle_returns(d, wkr);
+		if (unlikely(!d->active[wkr]))
+			return 0;
+		rte_pause();
+	}
 
 	buf->count = 0;
 
@@ -326,8 +427,11 @@ release(struct rte_distributor *d, unsigned int wkr)
 
 	d->backlog[wkr].count = 0;
 
-	/* Clear the GET bit */
-	buf->bufptr64[0] &= ~RTE_DISTRIB_GET_BUF;
+	/* Clear the GET bit.
+	 * Sync with worker on GET_BUF flag. Release bufptrs.
+	 */
+	__atomic_store_n(&(buf->bufptr64[0]),
+		buf->bufptr64[0] & ~RTE_DISTRIB_GET_BUF, __ATOMIC_RELEASE);
 	return  buf->count;
 
 }
@@ -335,7 +439,7 @@ release(struct rte_distributor *d, unsigned int wkr)
 
 /* process a set of packets to distribute them to workers */
 int
-rte_distributor_process_v1705(struct rte_distributor *d,
+rte_distributor_process(struct rte_distributor *d,
 		struct rte_mbuf **mbufs, unsigned int num_mbufs)
 {
 	unsigned int next_idx = 0;
@@ -344,17 +448,24 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 	int64_t next_value = 0;
 	uint16_t new_tag = 0;
 	uint16_t flows[RTE_DIST_BURST_SIZE] __rte_cache_aligned;
-	unsigned int i, j, w, wid;
+	unsigned int i, j, w, wid, matching_required;
 
 	if (d->alg_type == RTE_DIST_ALG_SINGLE) {
 		/* Call the old API */
-		return rte_distributor_process_v20(d->d_v20, mbufs, num_mbufs);
+		return rte_distributor_process_single(d->d_single,
+			mbufs, num_mbufs);
 	}
+
+	for (wid = 0 ; wid < d->num_workers; wid++)
+		handle_returns(d, wid);
 
 	if (unlikely(num_mbufs == 0)) {
 		/* Flush out all non-full cache-lines to workers. */
 		for (wid = 0 ; wid < d->num_workers; wid++) {
-			if (d->bufs[wid].bufptr64[0] & RTE_DISTRIB_GET_BUF) {
+			/* Sync with worker on GET_BUF flag. */
+			if (__atomic_load_n(&(d->bufs[wid].bufptr64[0]),
+				__ATOMIC_ACQUIRE) & RTE_DISTRIB_GET_BUF) {
+				d->bufs[wid].count = 0;
 				release(d, wid);
 				handle_returns(d, wid);
 			}
@@ -362,12 +473,12 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 		return 0;
 	}
 
+	if (unlikely(!d->activesum))
+		return 0;
+
 	while (next_idx < num_mbufs) {
 		uint16_t matches[RTE_DIST_BURST_SIZE];
 		unsigned int pkts;
-
-		if (d->bufs[wkr].bufptr64[0] & RTE_DISTRIB_GET_BUF)
-			d->bufs[wkr].count = 0;
 
 		if ((num_mbufs - next_idx) < RTE_DIST_BURST_SIZE)
 			pkts = num_mbufs - next_idx;
@@ -384,21 +495,29 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 		for (; i < RTE_DIST_BURST_SIZE; i++)
 			flows[i] = 0;
 
-		switch (d->dist_match_fn) {
-		case RTE_DIST_MATCH_VECTOR:
-			find_match_vec(d, &flows[0], &matches[0]);
-			break;
-		default:
-			find_match_scalar(d, &flows[0], &matches[0]);
-		}
+		matching_required = 1;
 
+		for (j = 0; j < pkts; j++) {
+			if (unlikely(!d->activesum))
+				return next_idx;
+
+			if (unlikely(matching_required)) {
+				switch (d->dist_match_fn) {
+				case RTE_DIST_MATCH_VECTOR:
+					find_match_vec(d, &flows[0],
+						&matches[0]);
+					break;
+				default:
+					find_match_scalar(d, &flows[0],
+						&matches[0]);
+				}
+				matching_required = 0;
+			}
 		/*
 		 * Matches array now contain the intended worker ID (+1) of
 		 * the incoming packets. Any zeroes need to be assigned
 		 * workers.
 		 */
-
-		for (j = 0; j < pkts; j++) {
 
 			next_mb = mbufs[next_idx++];
 			next_value = (((int64_t)(uintptr_t)next_mb) <<
@@ -419,12 +538,18 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 			 */
 			/* matches[j] = 0; */
 
-			if (matches[j]) {
+			if (matches[j] && d->active[matches[j]-1]) {
 				struct rte_distributor_backlog *bl =
 						&d->backlog[matches[j]-1];
 				if (unlikely(bl->count ==
 						RTE_DIST_BURST_SIZE)) {
 					release(d, matches[j]-1);
+					if (!d->active[matches[j]-1]) {
+						j--;
+						next_idx--;
+						matching_required = 1;
+						continue;
+					}
 				}
 
 				/* Add to worker that already has flow */
@@ -434,11 +559,21 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 				bl->pkts[idx] = next_value;
 
 			} else {
-				struct rte_distributor_backlog *bl =
-						&d->backlog[wkr];
+				struct rte_distributor_backlog *bl;
+
+				while (unlikely(!d->active[wkr]))
+					wkr = (wkr + 1) % d->num_workers;
+				bl = &d->backlog[wkr];
+
 				if (unlikely(bl->count ==
 						RTE_DIST_BURST_SIZE)) {
 					release(d, wkr);
+					if (!d->active[wkr]) {
+						j--;
+						next_idx--;
+						matching_required = 1;
+						continue;
+					}
 				}
 
 				/* Add to current worker worker */
@@ -457,26 +592,24 @@ rte_distributor_process_v1705(struct rte_distributor *d,
 						matches[w] = wkr+1;
 			}
 		}
-		wkr++;
-		if (wkr >= d->num_workers)
-			wkr = 0;
+		wkr = (wkr + 1) % d->num_workers;
 	}
 
 	/* Flush out all non-full cache-lines to workers. */
 	for (wid = 0 ; wid < d->num_workers; wid++)
-		if ((d->bufs[wid].bufptr64[0] & RTE_DISTRIB_GET_BUF))
+		/* Sync with worker on GET_BUF flag. */
+		if ((__atomic_load_n(&(d->bufs[wid].bufptr64[0]),
+			__ATOMIC_ACQUIRE) & RTE_DISTRIB_GET_BUF)) {
+			d->bufs[wid].count = 0;
 			release(d, wid);
+		}
 
 	return num_mbufs;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_process, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_process(struct rte_distributor *d,
-		struct rte_mbuf **mbufs, unsigned int num_mbufs),
-		rte_distributor_process_v1705);
 
 /* return to the caller, packets returned from workers */
 int
-rte_distributor_returned_pkts_v1705(struct rte_distributor *d,
+rte_distributor_returned_pkts(struct rte_distributor *d,
 		struct rte_mbuf **mbufs, unsigned int max_mbufs)
 {
 	struct rte_distributor_returned_pkts *returns = &d->returns;
@@ -486,7 +619,7 @@ rte_distributor_returned_pkts_v1705(struct rte_distributor *d,
 
 	if (d->alg_type == RTE_DIST_ALG_SINGLE) {
 		/* Call the old API */
-		return rte_distributor_returned_pkts_v20(d->d_v20,
+		return rte_distributor_returned_pkts_single(d->d_single,
 				mbufs, max_mbufs);
 	}
 
@@ -501,10 +634,6 @@ rte_distributor_returned_pkts_v1705(struct rte_distributor *d,
 
 	return retval;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_returned_pkts, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_returned_pkts(struct rte_distributor *d,
-		struct rte_mbuf **mbufs, unsigned int max_mbufs),
-		rte_distributor_returned_pkts_v1705);
 
 /*
  * Return the number of packets in-flight in a distributor, i.e. packets
@@ -516,7 +645,7 @@ total_outstanding(const struct rte_distributor *d)
 	unsigned int wkr, total_outstanding = 0;
 
 	for (wkr = 0; wkr < d->num_workers; wkr++)
-		total_outstanding += d->backlog[wkr].count;
+		total_outstanding += d->backlog[wkr].count + d->bufs[wkr].count;
 
 	return total_outstanding;
 }
@@ -526,14 +655,14 @@ total_outstanding(const struct rte_distributor *d)
  * queued up.
  */
 int
-rte_distributor_flush_v1705(struct rte_distributor *d)
+rte_distributor_flush(struct rte_distributor *d)
 {
 	unsigned int flushed;
 	unsigned int wkr;
 
 	if (d->alg_type == RTE_DIST_ALG_SINGLE) {
 		/* Call the old API */
-		return rte_distributor_flush_v20(d->d_v20);
+		return rte_distributor_flush_single(d->d_single);
 	}
 
 	flushed = total_outstanding(d);
@@ -555,33 +684,31 @@ rte_distributor_flush_v1705(struct rte_distributor *d)
 
 	return flushed;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_flush, _v1705, 17.05);
-MAP_STATIC_SYMBOL(int rte_distributor_flush(struct rte_distributor *d),
-		rte_distributor_flush_v1705);
 
 /* clears the internal returns array in the distributor */
 void
-rte_distributor_clear_returns_v1705(struct rte_distributor *d)
+rte_distributor_clear_returns(struct rte_distributor *d)
 {
 	unsigned int wkr;
 
 	if (d->alg_type == RTE_DIST_ALG_SINGLE) {
 		/* Call the old API */
-		rte_distributor_clear_returns_v20(d->d_v20);
+		rte_distributor_clear_returns_single(d->d_single);
 		return;
 	}
 
 	/* throw away returns, so workers can exit */
 	for (wkr = 0; wkr < d->num_workers; wkr++)
-		d->bufs[wkr].retptr64[0] = 0;
+		/* Sync with worker. Release retptrs. */
+		__atomic_store_n(&(d->bufs[wkr].retptr64[0]), 0,
+				__ATOMIC_RELEASE);
+
+	d->returns.start = d->returns.count = 0;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_clear_returns, _v1705, 17.05);
-MAP_STATIC_SYMBOL(void rte_distributor_clear_returns(struct rte_distributor *d),
-		rte_distributor_clear_returns_v1705);
 
 /* creates a distributor instance */
 struct rte_distributor *
-rte_distributor_create_v1705(const char *name,
+rte_distributor_create(const char *name,
 		unsigned int socket_id,
 		unsigned int num_workers,
 		unsigned int alg_type)
@@ -610,9 +737,9 @@ rte_distributor_create_v1705(const char *name,
 			rte_errno = ENOMEM;
 			return NULL;
 		}
-		d->d_v20 = rte_distributor_create_v20(name,
+		d->d_single = rte_distributor_create_single(name,
 				socket_id, num_workers);
-		if (d->d_v20 == NULL) {
+		if (d->d_single == NULL) {
 			free(d);
 			/* rte_errno will have been set */
 			return NULL;
@@ -629,7 +756,7 @@ rte_distributor_create_v1705(const char *name,
 	}
 
 	d = mz->addr;
-	snprintf(d->name, sizeof(d->name), "%s", name);
+	strlcpy(d->name, name, sizeof(d->name));
 	d->num_workers = num_workers;
 	d->alg_type = alg_type;
 
@@ -645,18 +772,16 @@ rte_distributor_create_v1705(const char *name,
 	for (i = 0 ; i < num_workers ; i++)
 		d->backlog[i].tags = &d->in_flight_tags[i][RTE_DIST_BURST_SIZE];
 
+	memset(d->active, 0, sizeof(d->active));
+	d->activesum = 0;
+
 	dist_burst_list = RTE_TAILQ_CAST(rte_dist_burst_tailq.head,
 					  rte_dist_burst_list);
 
 
-	rte_rwlock_write_lock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_lock();
 	TAILQ_INSERT_TAIL(dist_burst_list, d, next);
-	rte_rwlock_write_unlock(RTE_EAL_TAILQ_RWLOCK);
+	rte_mcfg_tailq_write_unlock();
 
 	return d;
 }
-BIND_DEFAULT_SYMBOL(rte_distributor_create, _v1705, 17.05);
-MAP_STATIC_SYMBOL(struct rte_distributor *rte_distributor_create(
-		const char *name, unsigned int socket_id,
-		unsigned int num_workers, unsigned int alg_type),
-		rte_distributor_create_v1705);

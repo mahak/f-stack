@@ -24,7 +24,7 @@ The only available options are the standard ones for the EAL:
 
 .. code-block:: console
 
-    ./ethtool-app/ethtool-app/${RTE_TARGET}/ethtool [EAL options]
+    ./ethtool-app/${RTE_TARGET}/ethtool [EAL options]
 
 Refer to the *DPDK Getting Started Guide* for general information on
 running applications and the Environment Abstraction Layer (EAL)
@@ -40,7 +40,7 @@ The application is console-driven using the cmdline DPDK interface:
         EthApp>
 
 From this interface the available commands and descriptions of what
-they do as as follows:
+they do as follows:
 
 * ``drvinfo``: Print driver info
 * ``eeprom``: Dump EEPROM to file

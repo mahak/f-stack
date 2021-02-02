@@ -10,10 +10,11 @@
 #include <rte_malloc.h>
 #include <rte_cpuflags.h>
 
-#include "rte_zuc_pmd_private.h"
+#include "zuc_pmd_private.h"
 #define ZUC_MAX_BURST 4
 #define BYTE_LEN 8
 
+int zuc_logtype_driver;
 static uint8_t cryptodev_driver_id;
 
 /** Get xform chain order. */
@@ -144,7 +145,8 @@ zuc_get_session(struct zuc_qp *qp, struct rte_crypto_op *op)
 		if (rte_mempool_get(qp->sess_mp, (void **)&_sess))
 			return NULL;
 
-		if (rte_mempool_get(qp->sess_mp, (void **)&_sess_private_data))
+		if (rte_mempool_get(qp->sess_mp_priv,
+				(void **)&_sess_private_data))
 			return NULL;
 
 		sess = (struct zuc_session *)_sess_private_data;
@@ -152,7 +154,7 @@ zuc_get_session(struct zuc_qp *qp, struct rte_crypto_op *op)
 		if (unlikely(zuc_set_session_parameters(sess,
 				op->sym->xform) != 0)) {
 			rte_mempool_put(qp->sess_mp, _sess);
-			rte_mempool_put(qp->sess_mp, _sess_private_data);
+			rte_mempool_put(qp->sess_mp_priv, _sess_private_data);
 			sess = NULL;
 		}
 		op->sym->session = (struct rte_cryptodev_sym_session *)_sess;
@@ -326,8 +328,9 @@ process_ops(struct rte_crypto_op **ops, enum zuc_operation op_type,
 		if (ops[i]->sess_type == RTE_CRYPTO_OP_SESSIONLESS) {
 			memset(sessions[i], 0, sizeof(struct zuc_session));
 			memset(ops[i]->sym->session, 0,
-					rte_cryptodev_sym_get_header_session_size());
-			rte_mempool_put(qp->sess_mp, sessions[i]);
+			rte_cryptodev_sym_get_existing_header_session_size(
+					ops[i]->sym->session));
+			rte_mempool_put(qp->sess_mp_priv, sessions[i]);
 			rte_mempool_put(qp->sess_mp, ops[i]->sym->session);
 			ops[i]->sym->session = NULL;
 		}
@@ -473,6 +476,7 @@ cryptodev_zuc_create(const char *name,
 
 	dev->feature_flags = RTE_CRYPTODEV_FF_SYMMETRIC_CRYPTO |
 			RTE_CRYPTODEV_FF_SYM_OPERATION_CHAINING |
+			RTE_CRYPTODEV_FF_OOP_LB_IN_LB_OUT |
 			cpu_flags;
 
 	internals = dev->data->dev_private;

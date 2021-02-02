@@ -1,33 +1,5 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright (c) 2017 Red Hat, Inc.
- *
- *   Redistribution and use in source and binary forms, with or without
- *   modification, are permitted provided that the following conditions
- *   are met:
- *
- *     * Redistributions of source code must retain the above copyright
- *       notice, this list of conditions and the following disclaimer.
- *     * Redistributions in binary form must reproduce the above copyright
- *       notice, this list of conditions and the following disclaimer in
- *       the documentation and/or other materials provided with the
- *       distribution.
- *     * Neither the name of Intel Corporation nor the names of its
- *       contributors may be used to endorse or promote products derived
- *       from this software without specific prior written permission.
- *
- *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
- *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
- *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
- *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
- *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
- *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
- *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
- *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
- *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright (c) 2017 Red Hat, Inc.
  */
 
 #ifdef RTE_LIBRTE_VHOST_NUMA
@@ -336,8 +308,9 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 	TAILQ_INIT(&vq->iotlb_list);
 	TAILQ_INIT(&vq->iotlb_pending_list);
 
-	snprintf(pool_name, sizeof(pool_name), "iotlb_cache_%d_%d",
-			dev->vid, vq_index);
+	snprintf(pool_name, sizeof(pool_name), "iotlb_%u_%d_%d",
+			getpid(), dev->vid, vq_index);
+	RTE_LOG(DEBUG, VHOST_CONFIG, "IOTLB cache name: %s\n", pool_name);
 
 	/* If already created, free it and recreate */
 	vq->iotlb_pool = rte_mempool_lookup(pool_name);
@@ -348,8 +321,7 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 			IOTLB_CACHE_SIZE, sizeof(struct vhost_iotlb_entry), 0,
 			0, 0, NULL, NULL, NULL, socket,
 			MEMPOOL_F_NO_CACHE_ALIGN |
-			MEMPOOL_F_SP_PUT |
-			MEMPOOL_F_SC_GET);
+			MEMPOOL_F_SP_PUT);
 	if (!vq->iotlb_pool) {
 		RTE_LOG(ERR, VHOST_CONFIG,
 				"Failed to create IOTLB cache pool (%s)\n",
@@ -361,4 +333,3 @@ vhost_user_iotlb_init(struct virtio_net *dev, int vq_index)
 
 	return 0;
 }
-

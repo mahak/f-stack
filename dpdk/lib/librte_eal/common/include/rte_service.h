@@ -104,11 +104,15 @@ int32_t rte_service_probe_capability(uint32_t id, uint32_t capability);
  * Each core can be added or removed from running a specific service. This
  * function enables or disables *lcore* to run *service_id*.
  *
- * If multiple cores are enabled on a service, an atomic is used to ensure that
- * only one cores runs the service at a time. The exception to this is when
+ * If multiple cores are enabled on a service, a lock is used to ensure that
+ * only one core runs the service at a time. The exception to this is when
  * a service indicates that it is multi-thread safe by setting the capability
  * called RTE_SERVICE_CAP_MT_SAFE. With the multi-thread safe capability set,
  * the service function can be run on multiple threads at the same time.
+ *
+ * If the service is known to be mapped to a single lcore, setting the
+ * capability of the service to RTE_SERVICE_CAP_MT_SAFE can achieve
+ * better performance by avoiding the use of lock.
  *
  * @param service_id the service to apply the lcore to
  * @param lcore The lcore that will be mapped to service
@@ -162,9 +166,6 @@ int32_t rte_service_runstate_set(uint32_t id, uint32_t runstate);
 int32_t rte_service_runstate_get(uint32_t id);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change, or be removed, without prior notice
- *
  * This function returns whether the service may be currently executing on
  * at least one lcore, or definitely is not. This function can be used to
  * determine if, after setting the service runstate to stopped, the service
@@ -178,7 +179,7 @@ int32_t rte_service_runstate_get(uint32_t id);
  * @retval 0 Service is not running on any lcore
  * @retval -EINVAL Invalid service id
  */
-int32_t __rte_experimental
+int32_t
 rte_service_may_be_active(uint32_t id);
 
 /**
@@ -303,6 +304,10 @@ int32_t rte_service_lcore_count(void);
  * from duty, just unmaps all services / cores, and stops() the service cores.
  * The runstate of services is not modified.
  *
+ * The cores that are stopped with this call, are in FINISHED state and
+ * the application must take care of bringing them back to a launchable state:
+ * e.g. call *rte_eal_lcore_wait* on the lcore_id.
+ *
  * @retval 0 Success
  */
 int32_t rte_service_lcore_reset_all(void);
@@ -372,7 +377,7 @@ int32_t rte_service_dump(FILE *f, uint32_t id);
  *         -EINVAL Invalid id, attr_id or attr_value was NULL.
  */
 int32_t rte_service_attr_get(uint32_t id, uint32_t attr_id,
-		uint32_t *attr_value);
+		uint64_t *attr_value);
 
 /**
  * Reset all attribute values of a service.
@@ -389,9 +394,6 @@ int32_t rte_service_attr_reset_all(uint32_t id);
 #define RTE_SERVICE_LCORE_ATTR_LOOPS 0
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Get an attribute from a service core.
  *
  * @param lcore Id of the service core.
@@ -401,14 +403,11 @@ int32_t rte_service_attr_reset_all(uint32_t id);
  *         -EINVAL Invalid lcore, attr_id or attr_value was NULL.
  *         -ENOTSUP lcore is not a service core.
  */
-int32_t __rte_experimental
+int32_t
 rte_service_lcore_attr_get(uint32_t lcore, uint32_t attr_id,
 			   uint64_t *attr_value);
 
 /**
- * @warning
- * @b EXPERIMENTAL: this API may change without prior notice
- *
  * Reset all attribute values of a service core.
  *
  * @param lcore The service core to reset all the statistics of
@@ -416,7 +415,7 @@ rte_service_lcore_attr_get(uint32_t lcore, uint32_t attr_id,
  *         -EINVAL Invalid service id provided
  *         -ENOTSUP lcore is not a service core.
  */
-int32_t __rte_experimental
+int32_t
 rte_service_lcore_attr_reset_all(uint32_t lcore);
 
 #ifdef __cplusplus

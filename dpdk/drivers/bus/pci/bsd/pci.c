@@ -33,7 +33,6 @@
 #include <rte_launch.h>
 #include <rte_memory.h>
 #include <rte_eal.h>
-#include <rte_eal_memconfig.h>
 #include <rte_per_lcore.h>
 #include <rte_lcore.h>
 #include <rte_malloc.h>
@@ -145,7 +144,7 @@ pci_uio_alloc_resource(struct rte_pci_device *dev,
 		goto error;
 	}
 
-	snprintf((*uio_res)->path, sizeof((*uio_res)->path), "%s", devname);
+	strlcpy((*uio_res)->path, devname, sizeof((*uio_res)->path));
 	memcpy(&(*uio_res)->pci_addr, &dev->addr, sizeof((*uio_res)->pci_addr));
 
 	return 0;
@@ -376,63 +375,21 @@ error:
 	return -1;
 }
 
-/*
- * Get iommu class of PCI devices on the bus.
- */
-enum rte_iova_mode
-rte_pci_get_iommu_class(void)
+bool
+pci_device_iommu_support_va(__rte_unused const struct rte_pci_device *dev)
 {
-	/* Supports only RTE_KDRV_NIC_UIO */
-	return RTE_IOVA_PA;
+	return false;
 }
 
-int
-pci_update_device(const struct rte_pci_addr *addr)
+enum rte_iova_mode
+pci_device_iova_mode(const struct rte_pci_driver *pdrv __rte_unused,
+		     const struct rte_pci_device *pdev)
 {
-	int fd;
-	struct pci_conf matches[2];
-	struct pci_match_conf match = {
-		.pc_sel = {
-			.pc_domain = addr->domain,
-			.pc_bus = addr->bus,
-			.pc_dev = addr->devid,
-			.pc_func = addr->function,
-		},
-	};
-	struct pci_conf_io conf_io = {
-		.pat_buf_len = 0,
-		.num_patterns = 1,
-		.patterns = &match,
-		.match_buf_len = sizeof(matches),
-		.matches = &matches[0],
-	};
+	/* Supports only RTE_KDRV_NIC_UIO */
+	if (pdev->kdrv != RTE_KDRV_NIC_UIO)
+		RTE_LOG(DEBUG, EAL, "Unsupported kernel driver? Defaulting to IOVA as 'PA'\n");
 
-	fd = open("/dev/pci", O_RDONLY);
-	if (fd < 0) {
-		RTE_LOG(ERR, EAL, "%s(): error opening /dev/pci\n", __func__);
-		goto error;
-	}
-
-	if (ioctl(fd, PCIOCGETCONF, &conf_io) < 0) {
-		RTE_LOG(ERR, EAL, "%s(): error with ioctl on /dev/pci: %s\n",
-				__func__, strerror(errno));
-		goto error;
-	}
-
-	if (conf_io.num_matches != 1)
-		goto error;
-
-	if (pci_scan_one(fd, &matches[0]) < 0)
-		goto error;
-
-	close(fd);
-
-	return 0;
-
-error:
-	if (fd >= 0)
-		close(fd);
-	return -1;
+	return RTE_IOVA_PA;
 }
 
 /* Read PCI config space. */
@@ -533,6 +490,11 @@ rte_pci_ioport_map(struct rte_pci_device *dev, int bar,
 	switch (dev->kdrv) {
 #if defined(RTE_ARCH_X86)
 	case RTE_KDRV_NIC_UIO:
+		if (rte_eal_iopl_init() != 0) {
+			RTE_LOG(ERR, EAL, "%s(): insufficient ioport permissions for PCI device %s\n",
+				__func__, dev->name);
+			return -1;
+		}
 		if ((uintptr_t) dev->mem_resource[bar].addr <= UINT16_MAX) {
 			p->base = (uintptr_t)dev->mem_resource[bar].addr;
 			ret = 0;

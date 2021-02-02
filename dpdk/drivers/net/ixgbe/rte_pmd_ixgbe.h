@@ -11,7 +11,9 @@
 #ifndef _PMD_IXGBE_H_
 #define _PMD_IXGBE_H_
 
-#include <rte_ethdev_driver.h>
+#include <rte_compat.h>
+#include <rte_ethdev.h>
+#include <rte_ether.h>
 
 /**
  * Notify VF when PF link status changes.
@@ -42,7 +44,7 @@ int rte_pmd_ixgbe_ping_vf(uint16_t port, uint16_t vf);
  *   - (-EINVAL) if *vf* or *mac_addr* is invalid.
  */
 int rte_pmd_ixgbe_set_vf_mac_addr(uint16_t port, uint16_t vf,
-		struct ether_addr *mac_addr);
+		struct rte_ether_addr *mac_addr);
 
 /**
  * Enable/Disable VF VLAN anti spoofing.
@@ -584,7 +586,8 @@ int rte_pmd_ixgbe_bypass_wd_reset(uint16_t port);
  *   - (-ENODEV) if *port* invalid.
  *   - (IXGBE_ERR_SWFW_SYNC) If sw/fw semaphore acquisition failed
  */
-int __rte_experimental
+__rte_experimental
+int
 rte_pmd_ixgbe_mdio_lock(uint16_t port);
 
 /**
@@ -597,7 +600,8 @@ rte_pmd_ixgbe_mdio_lock(uint16_t port);
  *   - (-ENOTSUP) if hardware doesn't support.
  *   - (-ENODEV) if *port* invalid.
  */
-int __rte_experimental
+__rte_experimental
+int
 rte_pmd_ixgbe_mdio_unlock(uint16_t port);
 
 /**
@@ -618,7 +622,8 @@ rte_pmd_ixgbe_mdio_unlock(uint16_t port);
  *   - (-ENODEV) if *port* invalid.
  *   - (IXGBE_ERR_PHY) If PHY read command failed
  */
-int __rte_experimental
+__rte_experimental
+int
 rte_pmd_ixgbe_mdio_unlocked_read(uint16_t port, uint32_t reg_addr,
 				 uint32_t dev_type, uint16_t *phy_data);
 
@@ -641,7 +646,8 @@ rte_pmd_ixgbe_mdio_unlocked_read(uint16_t port, uint32_t reg_addr,
  *   - (-ENODEV) if *port* invalid.
  *   - (IXGBE_ERR_PHY) If PHY read command failed
  */
-int __rte_experimental
+__rte_experimental
+int
 rte_pmd_ixgbe_mdio_unlocked_write(uint16_t port, uint32_t reg_addr,
 				  uint32_t dev_type, uint16_t phy_data);
 
@@ -719,6 +725,7 @@ enum {
  *   - (-ENODEV) if *port* invalid.
  *   - (-ENOTSUP) if hardware doesn't support this feature.
  */
-int __rte_experimental
+__rte_experimental
+int
 rte_pmd_ixgbe_upd_fctrl_sbp(uint16_t port, int enable);
 #endif /* _PMD_IXGBE_H_ */

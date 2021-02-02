@@ -13,7 +13,10 @@
 #define IFCVF_SUBSYS_DEVICE_ID	0x001A
 
 #define IFCVF_MAX_QUEUES		1
+
+#ifndef VIRTIO_F_IOMMU_PLATFORM
 #define VIRTIO_F_IOMMU_PLATFORM		33
+#endif
 
 /* Common configuration */
 #define IFCVF_PCI_CAP_COMMON_CFG	1
@@ -50,6 +53,7 @@
 #define IFCVF_LM_ENABLE_VF		0x1
 #define IFCVF_LM_ENABLE_PF		0x3
 #define IFCVF_LOG_BASE			0x100000000000
+#define IFCVF_MEDIATED_VRING		0x200000000000
 
 #define IFCVF_32_BIT_MASK		0xffffffff
 

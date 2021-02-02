@@ -92,12 +92,22 @@ error_exit:
 	return -ENOMEM;
 }
 
+static void
+fips_test_parse_version(void)
+{
+	int len = strlen(info.vec[0]);
+	char *ptr = info.vec[0];
+
+	info.version = strtof(ptr + len - 4, NULL);
+}
+
 static int
 fips_test_parse_header(void)
 {
 	uint32_t i;
 	char *tmp;
 	int ret;
+	int algo_parsed = 0;
 	time_t t = time(NULL);
 	struct tm *tm_now = localtime(&t);
 
@@ -105,37 +115,72 @@ fips_test_parse_header(void)
 	if (ret < 0)
 		return ret;
 
+	if (info.nb_vec_lines)
+		fips_test_parse_version();
+
 	for (i = 0; i < info.nb_vec_lines; i++) {
-		if (strstr(info.vec[i], "AESVS")) {
-			info.algo = FIPS_TEST_ALGO_AES;
-			ret = parse_test_aes_init();
-			if (ret < 0)
-				return ret;
-		} else if (strstr(info.vec[i], "GCM")) {
-			info.algo = FIPS_TEST_ALGO_AES_GCM;
-			ret = parse_test_gcm_init();
-			if (ret < 0)
-				return ret;
-		} else if (strstr(info.vec[i], "CMAC")) {
-			info.algo = FIPS_TEST_ALGO_AES_CMAC;
-			ret = parse_test_cmac_init();
-			if (ret < 0)
-				return 0;
-		} else if (strstr(info.vec[i], "CCM")) {
-			info.algo = FIPS_TEST_ALGO_AES_CCM;
-			ret = parse_test_ccm_init();
-			if (ret < 0)
-				return 0;
-		} else if (strstr(info.vec[i], "HMAC")) {
-			info.algo = FIPS_TEST_ALGO_HMAC;
-			ret = parse_test_hmac_init();
-			if (ret < 0)
-				return ret;
-		} else if (strstr(info.vec[i], "TDES")) {
-			info.algo = FIPS_TEST_ALGO_TDES;
-			ret = parse_test_tdes_init();
-			if (ret < 0)
-				return 0;
+		if (!algo_parsed) {
+			if (strstr(info.vec[i], "AESVS")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_AES;
+				ret = parse_test_aes_init();
+				if (ret < 0)
+					return ret;
+			} else if (strstr(info.vec[i], "GCM")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_AES_GCM;
+				ret = parse_test_gcm_init();
+				if (ret < 0)
+					return ret;
+			} else if (strstr(info.vec[i], "CMAC")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_AES_CMAC;
+				ret = parse_test_cmac_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "CCM")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_AES_CCM;
+				ret = parse_test_ccm_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "HMAC")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_HMAC;
+				ret = parse_test_hmac_init();
+				if (ret < 0)
+					return ret;
+			} else if (strstr(info.vec[i], "TDES")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_TDES;
+				ret = parse_test_tdes_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "PERMUTATION")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_TDES;
+				ret = parse_test_tdes_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "VARIABLE")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_TDES;
+				ret = parse_test_tdes_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "SUBSTITUTION")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_TDES;
+				ret = parse_test_tdes_init();
+				if (ret < 0)
+					return 0;
+			} else if (strstr(info.vec[i], "SHA-")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_SHA;
+				ret = parse_test_sha_init();
+				if (ret < 0)
+					return ret;
+			}
 		}
 
 		tmp = strstr(info.vec[i], "# Config info for ");
@@ -186,6 +231,18 @@ fips_test_parse_header(void)
 			continue;
 		}
 
+		tmp = strstr(info.vec[i], "\" information for \"");
+		if (tmp != NULL) {
+			char tmp_output[128] = {0};
+
+			strlcpy(tmp_output, info.vec[i], tmp - info.vec[i] + 1);
+
+			fprintf(info.fp_wr, "%s%s%s\n", tmp_output,
+					"\" information for DPDK Cryptodev ",
+					info.device_name);
+			continue;
+		}
+
 		if (i == info.nb_vec_lines - 1) {
 			/** update the time as current time, write to file */
 			fprintf(info.fp_wr, "%s%s\n", "# Generated on ",
@@ -230,6 +287,11 @@ fips_test_init(const char *req_file_path, const char *rsp_file_path,
 
 	fips_test_clear();
 
+	if (rte_strscpy(info.file_name, req_file_path,
+				sizeof(info.file_name)) < 0) {
+		RTE_LOG(ERR, USER1, "Path %s too long\n", req_file_path);
+		return -EINVAL;
+	}
 	info.algo = FIPS_TEST_ALGO_MAX;
 	if (parse_file_type(req_file_path) < 0) {
 		RTE_LOG(ERR, USER1, "File %s type not supported\n",
@@ -255,7 +317,11 @@ fips_test_init(const char *req_file_path, const char *rsp_file_path,
 		return -ENOMEM;
 	}
 
-	strlcpy(info.device_name, device_name, sizeof(info.device_name));
+	if (rte_strscpy(info.device_name, device_name,
+				sizeof(info.device_name)) < 0) {
+		RTE_LOG(ERR, USER1, "Device name %s too long\n", device_name);
+		return -EINVAL;
+	}
 
 	if (fips_test_parse_header() < 0) {
 		RTE_LOG(ERR, USER1, "Failed parsing header\n");
@@ -288,11 +354,15 @@ int
 fips_test_parse_one_case(void)
 {
 	uint32_t i, j = 0;
-	uint32_t is_interim = 0;
+	uint32_t is_interim;
+	uint32_t interim_cnt = 0;
 	int ret;
+
+	info.vec_start_off = 0;
 
 	if (info.interim_callbacks) {
 		for (i = 0; i < info.nb_vec_lines; i++) {
+			is_interim = 0;
 			for (j = 0; info.interim_callbacks[j].key != NULL; j++)
 				if (strstr(info.vec[i],
 					info.interim_callbacks[j].key)) {
@@ -305,17 +375,31 @@ fips_test_parse_one_case(void)
 					if (ret < 0)
 						return ret;
 				}
+
+			if (is_interim)
+				interim_cnt += 1;
 		}
 	}
 
-	if (is_interim) {
-		for (i = 0; i < info.nb_vec_lines; i++)
-			fprintf(info.fp_wr, "%s\n", info.vec[i]);
-		fprintf(info.fp_wr, "\n");
-		return 1;
+	if (interim_cnt) {
+		if (info.version == 21.4f) {
+			for (i = 0; i < interim_cnt; i++)
+				fprintf(info.fp_wr, "%s\n", info.vec[i]);
+			fprintf(info.fp_wr, "\n");
+
+			if (info.nb_vec_lines == interim_cnt)
+				return 1;
+		} else {
+			for (i = 0; i < info.nb_vec_lines; i++)
+				fprintf(info.fp_wr, "%s\n", info.vec[i]);
+			fprintf(info.fp_wr, "\n");
+			return 1;
+		}
 	}
 
-	for (i = 0; i < info.nb_vec_lines; i++) {
+	info.vec_start_off = interim_cnt;
+
+	for (i = info.vec_start_off; i < info.nb_vec_lines; i++) {
 		for (j = 0; info.callbacks[j].key != NULL; j++)
 			if (strstr(info.vec[i], info.callbacks[j].key)) {
 				ret = info.callbacks[j].cb(
@@ -335,7 +419,7 @@ fips_test_write_one_case(void)
 {
 	uint32_t i;
 
-	for (i = 0; i < info.nb_vec_lines; i++)
+	for (i = info.vec_start_off; i < info.nb_vec_lines; i++)
 		fprintf(info.fp_wr, "%s\n", info.vec[i]);
 }
 
@@ -579,9 +663,16 @@ update_info_vec(uint32_t count)
 
 	cb = &info.writeback_callbacks[0];
 
-	snprintf(info.vec[0], strlen(info.vec[0]) + 4, "%s%u", cb->key, count);
+	if ((info.version == 21.4f) && (!(strstr(info.vec[0], cb->key)))) {
+		fprintf(info.fp_wr, "%s%u\n", cb->key, count);
+		i = 0;
+	} else {
+		snprintf(info.vec[0], strlen(info.vec[0]) + 4, "%s%u", cb->key,
+				count);
+		i = 1;
+	}
 
-	for (i = 1; i < info.nb_vec_lines; i++) {
+	for (; i < info.nb_vec_lines; i++) {
 		for (j = 1; info.writeback_callbacks[j].key != NULL; j++) {
 			cb = &info.writeback_callbacks[j];
 			if (strstr(info.vec[i], cb->key)) {

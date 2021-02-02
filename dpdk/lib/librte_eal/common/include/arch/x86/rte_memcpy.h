@@ -22,6 +22,11 @@
 extern "C" {
 #endif
 
+#if defined(RTE_TOOLCHAIN_GCC) && (GCC_VERSION >= 100000)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+
 /**
  * Copy bytes from one location to another. The locations must not overlap.
  *
@@ -40,7 +45,7 @@ extern "C" {
 static __rte_always_inline void *
 rte_memcpy(void *dst, const void *src, size_t n);
 
-#ifdef RTE_MACHINE_CPUFLAG_AVX512F
+#if defined RTE_MACHINE_CPUFLAG_AVX512F && defined RTE_MEMCPY_AVX512
 
 #define ALIGNMENT_MASK 0x3F
 
@@ -115,7 +120,7 @@ rte_mov256(uint8_t *dst, const uint8_t *src)
  * Copy 128-byte blocks from one location to another,
  * locations should not overlap.
  */
-static inline void
+static __rte_always_inline void
 rte_mov128blocks(uint8_t *dst, const uint8_t *src, size_t n)
 {
 	__m512i zmm0, zmm1;
@@ -163,7 +168,7 @@ rte_mov512blocks(uint8_t *dst, const uint8_t *src, size_t n)
 	}
 }
 
-static inline void *
+static __rte_always_inline void *
 rte_memcpy_generic(void *dst, const void *src, size_t n)
 {
 	uintptr_t dstu = (uintptr_t)dst;
@@ -330,7 +335,7 @@ rte_mov64(uint8_t *dst, const uint8_t *src)
  * Copy 128 bytes from one location to another,
  * locations should not overlap.
  */
-static inline void
+static __rte_always_inline void
 rte_mov128(uint8_t *dst, const uint8_t *src)
 {
 	rte_mov32((uint8_t *)dst + 0 * 32, (const uint8_t *)src + 0 * 32);
@@ -343,7 +348,7 @@ rte_mov128(uint8_t *dst, const uint8_t *src)
  * Copy 128-byte blocks from one location to another,
  * locations should not overlap.
  */
-static inline void
+static __rte_always_inline void
 rte_mov128blocks(uint8_t *dst, const uint8_t *src, size_t n)
 {
 	__m256i ymm0, ymm1, ymm2, ymm3;
@@ -363,7 +368,7 @@ rte_mov128blocks(uint8_t *dst, const uint8_t *src, size_t n)
 	}
 }
 
-static inline void *
+static __rte_always_inline void *
 rte_memcpy_generic(void *dst, const void *src, size_t n)
 {
 	uintptr_t dstu = (uintptr_t)dst;
@@ -523,7 +528,7 @@ rte_mov64(uint8_t *dst, const uint8_t *src)
  * Copy 128 bytes from one location to another,
  * locations should not overlap.
  */
-static inline void
+static __rte_always_inline void
 rte_mov128(uint8_t *dst, const uint8_t *src)
 {
 	rte_mov16((uint8_t *)dst + 0 * 16, (const uint8_t *)src + 0 * 16);
@@ -655,7 +660,7 @@ __extension__ ({                                                      \
     }                                                                 \
 })
 
-static inline void *
+static __rte_always_inline void *
 rte_memcpy_generic(void *dst, const void *src, size_t n)
 {
 	__m128i xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7, xmm8;
@@ -800,7 +805,7 @@ COPY_BLOCK_64_BACK15:
 
 #endif /* RTE_MACHINE_CPUFLAG */
 
-static inline void *
+static __rte_always_inline void *
 rte_memcpy_aligned(void *dst, const void *src, size_t n)
 {
 	void *ret = dst;
@@ -860,7 +865,7 @@ rte_memcpy_aligned(void *dst, const void *src, size_t n)
 	return ret;
 }
 
-static inline void *
+static __rte_always_inline void *
 rte_memcpy(void *dst, const void *src, size_t n)
 {
 	if (!(((uintptr_t)dst | (uintptr_t)src) & ALIGNMENT_MASK))
@@ -868,6 +873,10 @@ rte_memcpy(void *dst, const void *src, size_t n)
 	else
 		return rte_memcpy_generic(dst, src, n);
 }
+
+#if defined(RTE_TOOLCHAIN_GCC) && (GCC_VERSION >= 100000)
+#pragma GCC diagnostic pop
+#endif
 
 #ifdef __cplusplus
 }

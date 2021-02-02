@@ -86,6 +86,12 @@ Multiprocessing-related options
 
     Set the type of the current process.
 
+*   ``--base-virtaddr <address>``
+
+    Attempt to use a different starting address for all memory maps of the
+    primary DPDK process. This can be helpful if secondary processes cannot
+    start due to conflicts in address map.
+
 Memory-related options
 ~~~~~~~~~~~~~~~~~~~~~~
 
@@ -126,7 +132,7 @@ Debugging options
 
     Specify log level for a specific component. For example::
 
-        --log-level eal:8
+        --log-level lib.eal:debug
 
     Can be specified multiple times.
 

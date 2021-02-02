@@ -3,11 +3,13 @@
  * Copyright 2015 Mellanox Technologies, Ltd
  */
 
+#include <fcntl.h>
 #include <inttypes.h>
 #include <linux/sockios.h>
 #include <linux/ethtool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <unistd.h>
 
 #include <rte_ethdev_driver.h>
 #include <rte_common.h>
@@ -136,22 +138,40 @@ static const struct mlx5_counter_ctrl mlx5_counters_init[] = {
 
 static const unsigned int xstats_n = RTE_DIM(mlx5_counters_init);
 
-static inline void
+static inline int
 mlx5_read_ib_stat(struct mlx5_priv *priv, const char *ctr_name, uint64_t *stat)
 {
-	FILE *file;
-	MKSTR(path, "%s/ports/1/hw_counters/%s",
-		  priv->ibdev_path,
-		  ctr_name);
+	int fd;
 
-	file = fopen(path, "rb");
-	if (file) {
-		int n = fscanf(file, "%" SCNu64, stat);
+	if (priv->sh) {
+		MKSTR(path, "%s/ports/%d/hw_counters/%s",
+		      priv->sh->ibdev_path,
+		      priv->ibv_port,
+		      ctr_name);
+		fd = open(path, O_RDONLY);
+		/*
+		 * in switchdev the file location is not per port
+		 * but rather in <ibdev_path>/hw_counters/<file_name>.
+		 */
+		if (fd == -1) {
+			MKSTR(path1, "%s/hw_counters/%s",
+			      priv->sh->ibdev_path,
+			      ctr_name);
+			fd = open(path1, O_RDONLY);
+		}
+		if (fd != -1) {
+			char buf[21] = {'\0'};
+			ssize_t n = read(fd, buf, sizeof(buf));
 
-		fclose(file);
-		if (n != 1)
-			stat = 0;
+			close(fd);
+			if (n != -1) {
+				*stat = strtoull(buf, NULL, 10);
+				return 0;
+			}
+		}
 	}
+	*stat = 0;
+	return 1;
 }
 
 /**
@@ -190,8 +210,14 @@ mlx5_read_dev_counters(struct rte_eth_dev *dev, uint64_t *stats)
 	}
 	for (i = 0; i != xstats_ctrl->mlx5_stats_n; ++i) {
 		if (xstats_ctrl->info[i].ib) {
-			mlx5_read_ib_stat(priv, xstats_ctrl->info[i].ctr_name,
-					  &stats[i]);
+			ret = mlx5_read_ib_stat(priv,
+						xstats_ctrl->info[i].ctr_name,
+						&stats[i]);
+			/* return last xstats counter if fail to read. */
+			if (ret == 0)
+				xstats_ctrl->xstats[i] = stats[i];
+			else
+				stats[i] = xstats_ctrl->xstats[i];
 		} else {
 			stats[i] = (uint64_t)
 				et_stats->data[xstats_ctrl->dev_table_idx[i]];
@@ -297,6 +323,7 @@ mlx5_stats_init(struct rte_eth_dev *dev)
 			unsigned int idx = xstats_ctrl->mlx5_stats_n++;
 
 			xstats_ctrl->info[idx] = mlx5_counters_init[i];
+			xstats_ctrl->hw_stats[idx] = 0;
 		}
 	}
 	assert(xstats_ctrl->mlx5_stats_n <= MLX5_MAX_XSTATS);
@@ -307,6 +334,7 @@ mlx5_stats_init(struct rte_eth_dev *dev)
 		DRV_LOG(ERR, "port %u cannot read device counters: %s",
 			dev->data->port_id, strerror(rte_errno));
 	mlx5_read_ib_stat(priv, "out_of_buffer", &stats_ctrl->imissed_base);
+	stats_ctrl->imissed = 0;
 free:
 	rte_free(strings);
 }
@@ -349,7 +377,23 @@ mlx5_xstats_get(struct rte_eth_dev *dev, struct rte_eth_xstat *stats,
 			return ret;
 		for (i = 0; i != mlx5_stats_n; ++i) {
 			stats[i].id = i;
-			stats[i].value = (counters[i] - xstats_ctrl->base[i]);
+			if (xstats_ctrl->info[i].ib) {
+				uint64_t wrap_n;
+				uint64_t hw_stat = xstats_ctrl->hw_stats[i];
+
+				stats[i].value = (counters[i] -
+						  xstats_ctrl->base[i]) &
+						  (uint64_t)UINT32_MAX;
+				wrap_n = hw_stat >> 32;
+				if (stats[i].value <
+					    (hw_stat & (uint64_t)UINT32_MAX))
+					wrap_n++;
+				stats[i].value |= (wrap_n) << 32;
+				xstats_ctrl->hw_stats[i] = stats[i].value;
+			} else {
+				stats[i].value =
+					(counters[i] - xstats_ctrl->base[i]);
+			}
 		}
 	}
 	return mlx5_stats_n;
@@ -371,9 +415,12 @@ int
 mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
+	struct mlx5_stats_ctrl *stats_ctrl = &priv->stats_ctrl;
 	struct rte_eth_stats tmp;
 	unsigned int i;
 	unsigned int idx;
+	uint64_t wrap_n;
+	int ret;
 
 	memset(&tmp, 0, sizeof(tmp));
 	/* Add software counters. */
@@ -382,7 +429,7 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 
 		if (rxq == NULL)
 			continue;
-		idx = rxq->stats.idx;
+		idx = rxq->idx;
 		if (idx < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
 #ifdef MLX5_PMD_SOFT_COUNTERS
 			tmp.q_ipackets[idx] += rxq->stats.ipackets;
@@ -403,13 +450,12 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 
 		if (txq == NULL)
 			continue;
-		idx = txq->stats.idx;
+		idx = txq->idx;
 		if (idx < RTE_ETHDEV_QUEUE_STAT_CNTRS) {
 #ifdef MLX5_PMD_SOFT_COUNTERS
 			tmp.q_opackets[idx] += txq->stats.opackets;
 			tmp.q_obytes[idx] += txq->stats.obytes;
 #endif
-			tmp.q_errors[idx] += txq->stats.oerrors;
 		}
 #ifdef MLX5_PMD_SOFT_COUNTERS
 		tmp.opackets += txq->stats.opackets;
@@ -417,8 +463,18 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 #endif
 		tmp.oerrors += txq->stats.oerrors;
 	}
-	mlx5_read_ib_stat(priv, "out_of_buffer", &tmp.imissed);
-	tmp.imissed -= priv->stats_ctrl.imissed_base;
+	ret = mlx5_read_ib_stat(priv, "out_of_buffer", &tmp.imissed);
+	if (ret == 0) {
+		tmp.imissed = (tmp.imissed - stats_ctrl->imissed_base) &
+				 (uint64_t)UINT32_MAX;
+		wrap_n = stats_ctrl->imissed >> 32;
+		if (tmp.imissed < (stats_ctrl->imissed & (uint64_t)UINT32_MAX))
+			wrap_n++;
+		tmp.imissed |= (wrap_n) << 32;
+		stats_ctrl->imissed = tmp.imissed;
+	} else {
+		tmp.imissed = stats_ctrl->imissed;
+	}
 #ifndef MLX5_PMD_SOFT_COUNTERS
 	/* FIXME: retrieve and add hardware counters. */
 #endif
@@ -431,33 +487,36 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   always 0 on success and stats is reset
  */
-void
+int
 mlx5_stats_reset(struct rte_eth_dev *dev)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_stats_ctrl *stats_ctrl = &priv->stats_ctrl;
 	unsigned int i;
-	unsigned int idx;
 
 	for (i = 0; (i != priv->rxqs_n); ++i) {
 		if ((*priv->rxqs)[i] == NULL)
 			continue;
-		idx = (*priv->rxqs)[i]->stats.idx;
-		(*priv->rxqs)[i]->stats =
-			(struct mlx5_rxq_stats){ .idx = idx };
+		memset(&(*priv->rxqs)[i]->stats, 0,
+		       sizeof(struct mlx5_rxq_stats));
 	}
 	for (i = 0; (i != priv->txqs_n); ++i) {
 		if ((*priv->txqs)[i] == NULL)
 			continue;
-		idx = (*priv->txqs)[i]->stats.idx;
-		(*priv->txqs)[i]->stats =
-			(struct mlx5_txq_stats){ .idx = idx };
+		memset(&(*priv->txqs)[i]->stats, 0,
+		       sizeof(struct mlx5_txq_stats));
 	}
 	mlx5_read_ib_stat(priv, "out_of_buffer", &stats_ctrl->imissed_base);
+	stats_ctrl->imissed = 0;
 #ifndef MLX5_PMD_SOFT_COUNTERS
 	/* FIXME: reset hardware counters. */
 #endif
+
+	return 0;
 }
 
 /**
@@ -465,34 +524,50 @@ mlx5_stats_reset(struct rte_eth_dev *dev)
  *
  * @param dev
  *   Pointer to Ethernet device structure.
+ *
+ * @return
+ *   0 on success and stats is reset, negative errno value otherwise and
+ *   rte_errno is set.
  */
-void
+int
 mlx5_xstats_reset(struct rte_eth_dev *dev)
 {
 	struct mlx5_priv *priv = dev->data->dev_private;
 	struct mlx5_xstats_ctrl *xstats_ctrl = &priv->xstats_ctrl;
 	int stats_n;
 	unsigned int i;
-	unsigned int n = xstats_ctrl->mlx5_stats_n;
-	uint64_t counters[n];
+	uint64_t *counters;
 	int ret;
 
 	stats_n = mlx5_ethtool_get_stats_n(dev);
 	if (stats_n < 0) {
 		DRV_LOG(ERR, "port %u cannot get stats: %s", dev->data->port_id,
 			strerror(-stats_n));
-		return;
+		return stats_n;
 	}
 	if (xstats_ctrl->stats_n != stats_n)
 		mlx5_stats_init(dev);
+	counters =  malloc(sizeof(*counters) * xstats_ctrl->mlx5_stats_n);
+	if (!counters) {
+		DRV_LOG(WARNING, "port %u unable to allocate memory for xstats "
+				"counters",
+		     dev->data->port_id);
+		rte_errno = ENOMEM;
+		return -rte_errno;
+	}
 	ret = mlx5_read_dev_counters(dev, counters);
 	if (ret) {
 		DRV_LOG(ERR, "port %u cannot read device counters: %s",
 			dev->data->port_id, strerror(rte_errno));
-		return;
+		free(counters);
+		return ret;
 	}
-	for (i = 0; i != n; ++i)
+	for (i = 0; i != xstats_ctrl->mlx5_stats_n; ++i) {
 		xstats_ctrl->base[i] = counters[i];
+		xstats_ctrl->hw_stats[i] = 0;
+	}
+	free(counters);
+	return 0;
 }
 
 /**

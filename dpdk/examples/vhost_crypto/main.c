@@ -46,6 +46,7 @@ struct vhost_crypto_info {
 	int vids[MAX_NB_SOCKETS];
 	uint32_t nb_vids;
 	struct rte_mempool *sess_pool;
+	struct rte_mempool *sess_priv_pool;
 	struct rte_mempool *cop_pool;
 	uint8_t cid;
 	uint32_t qid;
@@ -194,7 +195,7 @@ vhost_crypto_usage(const char *prgname)
 {
 	printf("%s [EAL options] --\n"
 		"  --%s <lcore>,SOCKET-FILE-PATH\n"
-		"  --%s (lcore,cdev_id,queue_id)[,(lcore,cdev_id,queue_id)]"
+		"  --%s (lcore,cdev_id,queue_id)[,(lcore,cdev_id,queue_id)]\n"
 		"  --%s: zero copy\n"
 		"  --%s: guest polling\n",
 		prgname, SOCKET_FILE_KEYWORD, CONFIG_KEYWORD,
@@ -289,6 +290,7 @@ new_device(int vid)
 	}
 
 	ret = rte_vhost_crypto_create(vid, info->cid, info->sess_pool,
+			info->sess_priv_pool,
 			rte_lcore_to_socket_id(options.los[i].lcore_id));
 	if (ret) {
 		RTE_LOG(ERR, USER1, "Cannot create vhost crypto\n");
@@ -442,6 +444,7 @@ free_resource(void)
 
 		rte_mempool_free(info->cop_pool);
 		rte_mempool_free(info->sess_pool);
+		rte_mempool_free(info->sess_priv_pool);
 
 		for (j = 0; j < lo->nb_sockets; j++) {
 			rte_vhost_driver_unregister(lo->socket_files[i]);
@@ -457,7 +460,7 @@ free_resource(void)
 int
 main(int argc, char *argv[])
 {
-	struct rte_cryptodev_qp_conf qp_conf = {NB_CRYPTO_DESCRIPTORS};
+	struct rte_cryptodev_qp_conf qp_conf;
 	struct rte_cryptodev_config config;
 	struct rte_cryptodev_info dev_info;
 	char name[128];
@@ -513,6 +516,7 @@ main(int argc, char *argv[])
 
 		config.nb_queue_pairs = dev_info.max_nb_queue_pairs;
 		config.socket_id = rte_lcore_to_socket_id(lo->lcore_id);
+		config.ff_disable = RTE_CRYPTODEV_FF_SECURITY;
 
 		ret = rte_cryptodev_configure(info->cid, &config);
 		if (ret < 0) {
@@ -522,11 +526,17 @@ main(int argc, char *argv[])
 		}
 
 		snprintf(name, 127, "SESS_POOL_%u", lo->lcore_id);
-		info->sess_pool = rte_mempool_create(name, SESSION_MAP_ENTRIES,
+		info->sess_pool = rte_cryptodev_sym_session_pool_create(name,
+				SESSION_MAP_ENTRIES, 0, 0, 0,
+				rte_lcore_to_socket_id(lo->lcore_id));
+
+		snprintf(name, 127, "SESS_POOL_PRIV_%u", lo->lcore_id);
+		info->sess_priv_pool = rte_mempool_create(name,
+				SESSION_MAP_ENTRIES,
 				rte_cryptodev_sym_get_private_session_size(
 				info->cid), 64, 0, NULL, NULL, NULL, NULL,
 				rte_lcore_to_socket_id(lo->lcore_id), 0);
-		if (!info->sess_pool) {
+		if (!info->sess_priv_pool || !info->sess_pool) {
 			RTE_LOG(ERR, USER1, "Failed to create mempool");
 			goto error_exit;
 		}
@@ -534,7 +544,7 @@ main(int argc, char *argv[])
 		snprintf(name, 127, "COPPOOL_%u", lo->lcore_id);
 		info->cop_pool = rte_crypto_op_pool_create(name,
 				RTE_CRYPTO_OP_TYPE_SYMMETRIC, NB_MEMPOOL_OBJS,
-				NB_CACHE_OBJS, 0,
+				NB_CACHE_OBJS, VHOST_CRYPTO_MAX_IV_LEN,
 				rte_lcore_to_socket_id(lo->lcore_id));
 
 		if (!info->cop_pool) {
@@ -545,11 +555,14 @@ main(int argc, char *argv[])
 
 		options.infos[i] = info;
 
+		qp_conf.nb_descriptors = NB_CRYPTO_DESCRIPTORS;
+		qp_conf.mp_session = info->sess_pool;
+		qp_conf.mp_session_private = info->sess_priv_pool;
+
 		for (j = 0; j < dev_info.max_nb_queue_pairs; j++) {
 			ret = rte_cryptodev_queue_pair_setup(info->cid, j,
 					&qp_conf, rte_lcore_to_socket_id(
-							lo->lcore_id),
-					info->sess_pool);
+							lo->lcore_id));
 			if (ret < 0) {
 				RTE_LOG(ERR, USER1, "Failed to configure qp\n");
 				goto error_exit;

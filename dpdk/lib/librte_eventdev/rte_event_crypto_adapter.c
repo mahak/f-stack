@@ -195,7 +195,7 @@ eca_default_config_cb(uint8_t id, uint8_t dev_id,
 	return ret;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_create_ext(uint8_t id, uint8_t dev_id,
 				rte_event_crypto_adapter_conf_cb conf_cb,
 				enum rte_event_crypto_adapter_mode mode,
@@ -240,6 +240,7 @@ rte_event_crypto_adapter_create_ext(uint8_t id, uint8_t dev_id,
 	if (ret < 0) {
 		RTE_EDEV_LOG_ERR("Failed to get info for eventdev %d: %s!",
 				 dev_id, dev_info.driver_name);
+		rte_free(adapter);
 		return ret;
 	}
 
@@ -271,7 +272,7 @@ rte_event_crypto_adapter_create_ext(uint8_t id, uint8_t dev_id,
 }
 
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_create(uint8_t id, uint8_t dev_id,
 				struct rte_event_port_conf *port_config,
 				enum rte_event_crypto_adapter_mode mode)
@@ -297,7 +298,7 @@ rte_event_crypto_adapter_create(uint8_t id, uint8_t dev_id,
 	return ret;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_free(uint8_t id)
 {
 	struct rte_event_crypto_adapter *adapter;
@@ -762,7 +763,7 @@ eca_add_queue_pair(struct rte_event_crypto_adapter *adapter,
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 			uint8_t cdev_id,
 			int32_t queue_pair_id,
@@ -877,7 +878,7 @@ rte_event_crypto_adapter_queue_pair_add(uint8_t id,
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_queue_pair_del(uint8_t id, uint8_t cdev_id,
 					int32_t queue_pair_id)
 {
@@ -1004,7 +1005,7 @@ eca_adapter_ctrl(uint8_t id, int start)
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_start(uint8_t id)
 {
 	struct rte_event_crypto_adapter *adapter;
@@ -1017,13 +1018,13 @@ rte_event_crypto_adapter_start(uint8_t id)
 	return eca_adapter_ctrl(id, 1);
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_stop(uint8_t id)
 {
 	return eca_adapter_ctrl(id, 0);
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_stats_get(uint8_t id,
 				struct rte_event_crypto_adapter_stats *stats)
 {
@@ -1068,7 +1069,7 @@ rte_event_crypto_adapter_stats_get(uint8_t id,
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_stats_reset(uint8_t id)
 {
 	struct rte_event_crypto_adapter *adapter;
@@ -1096,7 +1097,7 @@ rte_event_crypto_adapter_stats_reset(uint8_t id)
 	return 0;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_service_id_get(uint8_t id, uint32_t *service_id)
 {
 	struct rte_event_crypto_adapter *adapter;
@@ -1113,7 +1114,7 @@ rte_event_crypto_adapter_service_id_get(uint8_t id, uint32_t *service_id)
 	return adapter->service_inited ? 0 : -ESRCH;
 }
 
-int __rte_experimental
+int
 rte_event_crypto_adapter_event_port_get(uint8_t id, uint8_t *event_port_id)
 {
 	struct rte_event_crypto_adapter *adapter;
