@@ -14,6 +14,7 @@
 #include <rte_eal_memconfig.h>
 #include <rte_pause.h>
 #include <rte_tailq.h>
+#include <rte_vect.h>
 
 #include "rte_distributor.h"
 #include "rte_distributor_single.h"
@@ -477,7 +478,7 @@ rte_distributor_process(struct rte_distributor *d,
 		return 0;
 
 	while (next_idx < num_mbufs) {
-		uint16_t matches[RTE_DIST_BURST_SIZE];
+		uint16_t matches[RTE_DIST_BURST_SIZE] __rte_aligned(128);
 		unsigned int pkts;
 
 		if ((num_mbufs - next_idx) < RTE_DIST_BURST_SIZE)
@@ -762,7 +763,8 @@ rte_distributor_create(const char *name,
 
 	d->dist_match_fn = RTE_DIST_MATCH_SCALAR;
 #if defined(RTE_ARCH_X86)
-	d->dist_match_fn = RTE_DIST_MATCH_VECTOR;
+	if (rte_vect_get_max_simd_bitwidth() >= RTE_VECT_SIMD_128)
+		d->dist_match_fn = RTE_DIST_MATCH_VECTOR;
 #endif
 
 	/*

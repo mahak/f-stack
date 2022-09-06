@@ -7,6 +7,7 @@
 
 #include <rte_cryptodev.h>
 #include <rte_malloc.h>
+#include <rte_ether.h>
 
 #include "cperf_options.h"
 
@@ -23,7 +24,7 @@ usage(char *progname)
 {
 	printf("%s [EAL options] --\n"
 		" --silent: disable options dump\n"
-		" --ptest throughput / latency / verify / pmd-cycleount :"
+		" --ptest throughput / latency / verify / pmd-cyclecount :"
 		" set test type\n"
 		" --pool_sz N: set the number of crypto ops/mbufs allocated\n"
 		" --total-ops N: set the number of total operations performed\n"
@@ -56,6 +57,12 @@ usage(char *progname)
 		" --pmd-cyclecount-delay-ms N: set delay between enqueue\n"
 		"           and dequeue in pmd-cyclecount benchmarking mode\n"
 		" --csv-friendly: enable test result output CSV friendly\n"
+#ifdef RTE_LIB_SECURITY
+		" --pdcp-sn-sz N: set PDCP SN size N <5/7/12/15/18>\n"
+		" --pdcp-domain DOMAIN: set PDCP domain <control/user>\n"
+		" --pdcp-ses-hfn-en: enable session based fixed HFN\n"
+		" --docsis-hdr-sz: set DOCSIS header size\n"
+#endif
 		" -h: prints this help\n",
 		progname);
 }
@@ -446,6 +453,10 @@ parse_op_type(struct cperf_options *opts, const char *arg)
 		{
 			cperf_op_type_strs[CPERF_PDCP],
 			CPERF_PDCP
+		},
+		{
+			cperf_op_type_strs[CPERF_DOCSIS],
+			CPERF_DOCSIS
 		}
 	};
 
@@ -495,6 +506,12 @@ parse_test_name(struct cperf_options *opts,
 {
 	char *test_name = (char *) rte_zmalloc(NULL,
 		sizeof(char) * (strlen(arg) + 3), 0);
+	if (test_name == NULL) {
+		RTE_LOG(ERR, USER1, "Failed to rte zmalloc with size: %zu\n",
+			strlen(arg) + 3);
+		return -1;
+	}
+
 	snprintf(test_name, strlen(arg) + 3, "[%s]", arg);
 	opts->test_name = test_name;
 
@@ -620,7 +637,7 @@ parse_digest_sz(struct cperf_options *opts, const char *arg)
 	return parse_uint16_t(&opts->digest_sz, arg);
 }
 
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 static int
 parse_pdcp_sn_sz(struct cperf_options *opts, const char *arg)
 {
@@ -674,6 +691,19 @@ parse_pdcp_domain(struct cperf_options *opts, const char *arg)
 	opts->pdcp_domain = (enum rte_security_pdcp_domain)id;
 
 	return 0;
+}
+
+static int
+parse_pdcp_ses_hfn_en(struct cperf_options *opts, const char *arg __rte_unused)
+{
+	opts->pdcp_ses_hfn_en = 1;
+	return 0;
+}
+
+static int
+parse_docsis_hdr_sz(struct cperf_options *opts, const char *arg)
+{
+	return parse_uint16_t(&opts->docsis_hdr_sz, arg);
 }
 #endif
 
@@ -817,9 +847,11 @@ static struct option lgopts[] = {
 
 	{ CPERF_DIGEST_SZ, required_argument, 0, 0 },
 
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 	{ CPERF_PDCP_SN_SZ, required_argument, 0, 0 },
 	{ CPERF_PDCP_DOMAIN, required_argument, 0, 0 },
+	{ CPERF_PDCP_SES_HFN_EN, no_argument, 0, 0 },
+	{ CPERF_DOCSIS_HDR_SZ, required_argument, 0, 0 },
 #endif
 	{ CPERF_CSV, no_argument, 0, 0},
 
@@ -887,9 +919,11 @@ cperf_options_default(struct cperf_options *opts)
 	opts->digest_sz = 12;
 
 	opts->pmdcc_delay = 0;
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 	opts->pdcp_sn_sz = 12;
 	opts->pdcp_domain = RTE_SECURITY_PDCP_MODE_CONTROL;
+	opts->pdcp_ses_hfn_en = 0;
+	opts->docsis_hdr_sz = 17;
 #endif
 }
 
@@ -926,9 +960,11 @@ cperf_opts_parse_long(int opt_idx, struct cperf_options *opts)
 		{ CPERF_AEAD_IV_SZ,	parse_aead_iv_sz },
 		{ CPERF_AEAD_AAD_SZ,	parse_aead_aad_sz },
 		{ CPERF_DIGEST_SZ,	parse_digest_sz },
-#ifdef RTE_LIBRTE_SECURITY
+#ifdef RTE_LIB_SECURITY
 		{ CPERF_PDCP_SN_SZ,	parse_pdcp_sn_sz },
 		{ CPERF_PDCP_DOMAIN,	parse_pdcp_domain },
+		{ CPERF_PDCP_SES_HFN_EN,	parse_pdcp_ses_hfn_en },
+		{ CPERF_DOCSIS_HDR_SZ,	parse_docsis_hdr_sz },
 #endif
 		{ CPERF_CSV,		parse_csv_friendly},
 		{ CPERF_PMDCC_DELAY_MS,	parse_pmd_cyclecount_delay_ms},
@@ -953,7 +989,7 @@ cperf_options_parse(struct cperf_options *options, int argc, char **argv)
 		switch (opt) {
 		case 'h':
 			usage(argv[0]);
-			rte_exit(EXIT_SUCCESS, "Displayed help\n");
+			exit(EXIT_SUCCESS);
 			break;
 		/* long options */
 		case 0:
@@ -1031,10 +1067,44 @@ check_cipher_buffer_length(struct cperf_options *options)
 	return 0;
 }
 
+#ifdef RTE_LIB_SECURITY
+static int
+check_docsis_buffer_length(struct cperf_options *options)
+{
+	uint32_t buffer_size, buffer_size_idx = 0;
+
+	if (options->inc_buffer_size != 0)
+		buffer_size = options->min_buffer_size;
+	else
+		buffer_size = options->buffer_size_list[0];
+
+	while (buffer_size <= options->max_buffer_size) {
+		if (buffer_size < (uint32_t)(options->docsis_hdr_sz +
+				RTE_ETHER_HDR_LEN + RTE_ETHER_CRC_LEN)) {
+			RTE_LOG(ERR, USER1, "Some of the buffer sizes are not "
+				"valid for DOCSIS\n");
+			return -EINVAL;
+		}
+
+		if (options->inc_buffer_size != 0)
+			buffer_size += options->inc_buffer_size;
+		else {
+			if (++buffer_size_idx == options->buffer_size_count)
+				break;
+			buffer_size =
+				options->buffer_size_list[buffer_size_idx];
+		}
+	}
+
+	return 0;
+}
+#endif
+
 int
 cperf_options_check(struct cperf_options *options)
 {
-	if (options->op_type == CPERF_CIPHER_ONLY)
+	if (options->op_type == CPERF_CIPHER_ONLY ||
+			options->op_type == CPERF_DOCSIS)
 		options->digest_sz = 0;
 
 	if (options->out_of_place &&
@@ -1151,6 +1221,13 @@ cperf_options_check(struct cperf_options *options)
 			return -EINVAL;
 	}
 
+#ifdef RTE_LIB_SECURITY
+	if (options->op_type == CPERF_DOCSIS) {
+		if (check_docsis_buffer_length(options) < 0)
+			return -EINVAL;
+	}
+#endif
+
 	return 0;
 }
 
@@ -1236,4 +1313,11 @@ cperf_options_dump(struct cperf_options *opts)
 		printf("# aead aad size: %u\n", opts->aead_aad_sz);
 		printf("#\n");
 	}
+
+#ifdef RTE_LIB_SECURITY
+	if (opts->op_type == CPERF_DOCSIS) {
+		printf("# docsis header size: %u\n", opts->docsis_hdr_sz);
+		printf("#\n");
+	}
+#endif
 }

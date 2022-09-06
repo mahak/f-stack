@@ -2,6 +2,8 @@
  * Copyright(c) 2016-2017 Intel Corporation
  */
 
+#define OPENSSL_API_COMPAT 0x10100000L
+
 #include <rte_common.h>
 #include <rte_hexdump.h>
 #include <rte_cryptodev.h>
@@ -18,7 +20,6 @@
 
 #define DES_BLOCK_SIZE 8
 
-int openssl_logtype_driver;
 static uint8_t cryptodev_driver_id;
 
 #if (OPENSSL_VERSION_NUMBER < 0x10100000L)
@@ -1115,7 +1116,7 @@ process_openssl_auth_encryption_ccm(struct rte_mbuf *mbuf_src, int offset,
 		if (EVP_EncryptUpdate(ctx, NULL, &len, aad + 18, aadlen) <= 0)
 			goto process_auth_encryption_ccm_err;
 
-	if (srclen > 0)
+	if (srclen >= 0)
 		if (process_openssl_encryption_update(mbuf_src, offset, &dst,
 				srclen, ctx, 0))
 			goto process_auth_encryption_ccm_err;
@@ -1198,7 +1199,7 @@ process_openssl_auth_decryption_ccm(struct rte_mbuf *mbuf_src, int offset,
 		if (EVP_DecryptUpdate(ctx, NULL, &len, aad + 18, aadlen) <= 0)
 			goto process_auth_decryption_ccm_err;
 
-	if (srclen > 0)
+	if (srclen >= 0)
 		if (process_openssl_decryption_update(mbuf_src, offset, &dst,
 				srclen, ctx, 0))
 			return -EFAULT;
@@ -2207,7 +2208,8 @@ cryptodev_openssl_create(const char *name,
 			RTE_CRYPTODEV_FF_OOP_LB_IN_LB_OUT |
 			RTE_CRYPTODEV_FF_ASYMMETRIC_CRYPTO |
 			RTE_CRYPTODEV_FF_RSA_PRIV_OP_KEY_EXP |
-			RTE_CRYPTODEV_FF_RSA_PRIV_OP_KEY_QT;
+			RTE_CRYPTODEV_FF_RSA_PRIV_OP_KEY_QT |
+			RTE_CRYPTODEV_FF_SYM_SESSIONLESS;
 
 	internals = dev->data->dev_private;
 
@@ -2278,8 +2280,4 @@ RTE_PMD_REGISTER_PARAM_STRING(CRYPTODEV_NAME_OPENSSL_PMD,
 	"socket_id=<int>");
 RTE_PMD_REGISTER_CRYPTO_DRIVER(openssl_crypto_drv,
 		cryptodev_openssl_pmd_drv.driver, cryptodev_driver_id);
-
-RTE_INIT(openssl_init_log)
-{
-	openssl_logtype_driver = rte_log_register("pmd.crypto.openssl");
-}
+RTE_LOG_REGISTER(openssl_logtype_driver, pmd.crypto.openssl, INFO);

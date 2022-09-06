@@ -180,6 +180,12 @@ fips_test_parse_header(void)
 				ret = parse_test_sha_init();
 				if (ret < 0)
 					return ret;
+			} else if (strstr(info.vec[i], "XTS")) {
+				algo_parsed = 1;
+				info.algo = FIPS_TEST_ALGO_AES_XTS;
+				ret = parse_test_xts_init();
+				if (ret < 0)
+					return ret;
 			}
 		}
 
@@ -516,7 +522,7 @@ parse_uint8_hex_str(const char *key, char *src, struct fips_val *val)
 		val->val = NULL;
 	}
 
-	val->val = rte_zmalloc(NULL, len, 0);
+	val->val = rte_zmalloc(NULL, len + 1, 0);
 	if (!val->val)
 		return -ENOMEM;
 

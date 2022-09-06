@@ -16,7 +16,7 @@
 #define PRETTY_HDR_FMT "%12s%12s%12s%12s%12s%12s%12s%12s%12s%12s\n\n"
 #define PRETTY_LINE_FMT "%12u%12u%12u%12u%12u%12u%12u%12.0f%12.0f%12.0f\n"
 #define CSV_HDR_FMT "%s,%s,%s,%s,%s,%s,%s,%s,%s,%s\n"
-#define CSV_LINE_FMT "%10u;%10u;%u;%u;%u;%u;%u;%.3f;%.3f;%.3f\n"
+#define CSV_LINE_FMT "%10u,%10u,%u,%u,%u,%u,%u,%.3f,%.3f,%.3f\n"
 
 struct cperf_pmd_cyclecount_ctx {
 	uint8_t dev_id;
@@ -59,23 +59,36 @@ static const uint16_t iv_offset =
 static void
 cperf_pmd_cyclecount_test_free(struct cperf_pmd_cyclecount_ctx *ctx)
 {
-	if (ctx) {
-		if (ctx->sess) {
+	if (!ctx)
+		return;
+
+	if (ctx->sess) {
+#ifdef RTE_LIB_SECURITY
+		if (ctx->options->op_type == CPERF_PDCP ||
+				ctx->options->op_type == CPERF_DOCSIS) {
+			struct rte_security_ctx *sec_ctx =
+				(struct rte_security_ctx *)
+				rte_cryptodev_get_sec_ctx(ctx->dev_id);
+			rte_security_session_destroy(sec_ctx,
+				(struct rte_security_session *)ctx->sess);
+		} else
+#endif
+		{
 			rte_cryptodev_sym_session_clear(ctx->dev_id, ctx->sess);
 			rte_cryptodev_sym_session_free(ctx->sess);
 		}
-
-		if (ctx->pool)
-			rte_mempool_free(ctx->pool);
-
-		if (ctx->ops)
-			rte_free(ctx->ops);
-
-		if (ctx->ops_processed)
-			rte_free(ctx->ops_processed);
-
-		rte_free(ctx);
 	}
+
+	if (ctx->pool)
+		rte_mempool_free(ctx->pool);
+
+	if (ctx->ops)
+		rte_free(ctx->ops);
+
+	if (ctx->ops_processed)
+		rte_free(ctx->ops_processed);
+
+	rte_free(ctx);
 }
 
 void *
@@ -321,7 +334,7 @@ pmd_cyclecount_bench_burst_sz(
 	 * queue, so we never get any failed enqs unless the driver won't accept
 	 * the exact number of descriptors we requested, or the driver won't
 	 * wrap around the end of the TX ring. However, since we're only
-	 * dequeueing once we've filled up the queue, we have to benchmark it
+	 * dequeuing once we've filled up the queue, we have to benchmark it
 	 * piecemeal and then average out the results.
 	 */
 	cur_op = 0;

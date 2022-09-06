@@ -264,17 +264,6 @@ static void fw_asrt(struct adapter *adap, u32 mbox_addr)
 
 #define X_CIM_PF_NOACCESS 0xeeeeeeee
 
-/*
- * If the Host OS Driver needs locking arround accesses to the mailbox, this
- * can be turned on via the T4_OS_NEEDS_MBOX_LOCKING CPP define ...
- */
-/* makes single-statement usage a bit cleaner ... */
-#ifdef T4_OS_NEEDS_MBOX_LOCKING
-#define T4_OS_MBOX_LOCKING(x) x
-#else
-#define T4_OS_MBOX_LOCKING(x) do {} while (0)
-#endif
-
 /**
  * t4_wr_mbox_meat_timeout - send a command to FW through the given mailbox
  * @adap: the adapter
@@ -315,28 +304,17 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 		1, 1, 3, 5, 10, 10, 20, 50, 100
 	};
 
-	u32 v;
-	u64 res;
-	int i, ms;
-	unsigned int delay_idx;
-	__be64 *temp = (__be64 *)malloc(size * sizeof(char));
-	__be64 *p = temp;
 	u32 data_reg = PF_REG(mbox, A_CIM_PF_MAILBOX_DATA);
 	u32 ctl_reg = PF_REG(mbox, A_CIM_PF_MAILBOX_CTRL);
-	u32 ctl;
-	struct mbox_entry entry;
-	u32 pcie_fw = 0;
+	struct mbox_entry *entry;
+	u32 v, ctl, pcie_fw = 0;
+	unsigned int delay_idx;
+	const __be64 *p;
+	int i, ms, ret;
+	u64 res;
 
-	if (!temp)
-		return -ENOMEM;
-
-	if ((size & 15) || size > MBOX_LEN) {
-		free(temp);
+	if ((size & 15) != 0 || size > MBOX_LEN)
 		return -EINVAL;
-	}
-
-	memset(p, 0, size);
-	memcpy(p, (const __be64 *)cmd, size);
 
 	/*
 	 * If we have a negative timeout, that implies that we can't sleep.
@@ -346,14 +324,17 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 		timeout = -timeout;
 	}
 
-#ifdef T4_OS_NEEDS_MBOX_LOCKING
+	entry = t4_os_alloc(sizeof(*entry));
+	if (entry == NULL)
+		return -ENOMEM;
+
 	/*
 	 * Queue ourselves onto the mailbox access list.  When our entry is at
 	 * the front of the list, we have rights to access the mailbox.  So we
 	 * wait [for a while] till we're at the front [or bail out with an
 	 * EBUSY] ...
 	 */
-	t4_os_atomic_add_tail(&entry, &adap->mbox_list, &adap->mbox_lock);
+	t4_os_atomic_add_tail(entry, &adap->mbox_list, &adap->mbox_lock);
 
 	delay_idx = 0;
 	ms = delay[0];
@@ -368,18 +349,18 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 		 */
 		pcie_fw = t4_read_reg(adap, A_PCIE_FW);
 		if (i > 4 * timeout || (pcie_fw & F_PCIE_FW_ERR)) {
-			t4_os_atomic_list_del(&entry, &adap->mbox_list,
+			t4_os_atomic_list_del(entry, &adap->mbox_list,
 					      &adap->mbox_lock);
 			t4_report_fw_error(adap);
-			free(temp);
-			return (pcie_fw & F_PCIE_FW_ERR) ? -ENXIO : -EBUSY;
+			ret = ((pcie_fw & F_PCIE_FW_ERR) != 0) ? -ENXIO : -EBUSY;
+			goto out_free;
 		}
 
 		/*
 		 * If we're at the head, break out and start the mailbox
 		 * protocol.
 		 */
-		if (t4_os_list_first_entry(&adap->mbox_list) == &entry)
+		if (t4_os_list_first_entry(&adap->mbox_list) == entry)
 			break;
 
 		/*
@@ -394,7 +375,6 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 			rte_delay_ms(ms);
 		}
 	}
-#endif /* T4_OS_NEEDS_MBOX_LOCKING */
 
 	/*
 	 * Attempt to gain access to the mailbox.
@@ -411,12 +391,11 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 	 * mailbox atomic access list and report the error to our caller.
 	 */
 	if (v != X_MBOWNER_PL) {
-		T4_OS_MBOX_LOCKING(t4_os_atomic_list_del(&entry,
-							 &adap->mbox_list,
-							 &adap->mbox_lock));
+		t4_os_atomic_list_del(entry, &adap->mbox_list,
+				      &adap->mbox_lock);
 		t4_report_fw_error(adap);
-		free(temp);
-		return (v == X_MBOWNER_FW ? -EBUSY : -ETIMEDOUT);
+		ret = (v == X_MBOWNER_FW) ? -EBUSY : -ETIMEDOUT;
+		goto out_free;
 	}
 
 	/*
@@ -442,7 +421,7 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 	/*
 	 * Copy in the new mailbox command and send it on its way ...
 	 */
-	for (i = 0; i < size; i += 8, p++)
+	for (i = 0, p = cmd; i < size; i += 8, p++)
 		t4_write_reg64(adap, data_reg + i, be64_to_cpu(*p));
 
 	CXGBE_DEBUG_MBOX(adap, "%s: mbox %u: %016llx %016llx %016llx %016llx "
@@ -513,11 +492,10 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 				get_mbox_rpl(adap, rpl, size / 8, data_reg);
 			}
 			t4_write_reg(adap, ctl_reg, V_MBOWNER(X_MBOWNER_NONE));
-			T4_OS_MBOX_LOCKING(
-				t4_os_atomic_list_del(&entry, &adap->mbox_list,
-						      &adap->mbox_lock));
-			free(temp);
-			return -G_FW_CMD_RETVAL((int)res);
+			t4_os_atomic_list_del(entry, &adap->mbox_list,
+					      &adap->mbox_lock);
+			ret = -G_FW_CMD_RETVAL((int)res);
+			goto out_free;
 		}
 	}
 
@@ -528,12 +506,13 @@ int t4_wr_mbox_meat_timeout(struct adapter *adap, int mbox,
 	 */
 	dev_err(adap, "command %#x in mailbox %d timed out\n",
 		*(const u8 *)cmd, mbox);
-	T4_OS_MBOX_LOCKING(t4_os_atomic_list_del(&entry,
-						 &adap->mbox_list,
-						 &adap->mbox_lock));
+	t4_os_atomic_list_del(entry, &adap->mbox_list, &adap->mbox_lock);
 	t4_report_fw_error(adap);
-	free(temp);
-	return (pcie_fw & F_PCIE_FW_ERR) ? -ENXIO : -ETIMEDOUT;
+	ret = ((pcie_fw & F_PCIE_FW_ERR) != 0) ? -ENXIO : -ETIMEDOUT;
+
+out_free:
+	t4_os_free(entry);
+	return ret;
 }
 
 int t4_wr_mbox_meat(struct adapter *adap, int mbox, const void *cmd, int size,
@@ -2517,6 +2496,10 @@ int t4_get_pfres(struct adapter *adapter)
 
 	word = be32_to_cpu(rpl.type_to_neq);
 	pfres->neq = G_FW_PFVF_CMD_NEQ(word);
+
+	word = be32_to_cpu(rpl.r_caps_to_nethctrl);
+	pfres->nethctrl = G_FW_PFVF_CMD_NETHCTRL(word);
+
 	return 0;
 }
 
@@ -4017,7 +4000,8 @@ int t4_set_params(struct adapter *adap, unsigned int mbox, unsigned int pf,
 int t4_alloc_vi_func(struct adapter *adap, unsigned int mbox,
 		     unsigned int port, unsigned int pf, unsigned int vf,
 		     unsigned int nmac, u8 *mac, unsigned int *rss_size,
-		     unsigned int portfunc, unsigned int idstype)
+		     unsigned int portfunc, unsigned int idstype,
+		     u8 *vivld, u8 *vin)
 {
 	int ret;
 	struct fw_vi_cmd c;
@@ -4055,6 +4039,10 @@ int t4_alloc_vi_func(struct adapter *adap, unsigned int mbox,
 	}
 	if (rss_size)
 		*rss_size = G_FW_VI_CMD_RSSSIZE(be16_to_cpu(c.norss_rsssize));
+	if (vivld)
+		*vivld = G_FW_VI_CMD_VFVLD(be32_to_cpu(c.alloc_to_len16));
+	if (vin)
+		*vin = G_FW_VI_CMD_VIN(be32_to_cpu(c.alloc_to_len16));
 	return G_FW_VI_CMD_VIID(cpu_to_be16(c.type_to_viid));
 }
 
@@ -4075,10 +4063,10 @@ int t4_alloc_vi_func(struct adapter *adap, unsigned int mbox,
  */
 int t4_alloc_vi(struct adapter *adap, unsigned int mbox, unsigned int port,
 		unsigned int pf, unsigned int vf, unsigned int nmac, u8 *mac,
-		unsigned int *rss_size)
+		unsigned int *rss_size, u8 *vivld, u8 *vin)
 {
 	return t4_alloc_vi_func(adap, mbox, port, pf, vf, nmac, mac, rss_size,
-				FW_VI_FUNC_ETH, 0);
+				FW_VI_FUNC_ETH, 0, vivld, vin);
 }
 
 /**
@@ -5035,6 +5023,10 @@ int t4_prep_adapter(struct adapter *adapter)
 		adapter->params.arch.mps_rplc_size = 128;
 		adapter->params.arch.nchan = NCHAN;
 		adapter->params.arch.vfcount = 128;
+		/* Congestion map is for 4 channels so that
+		 * MPS can have 4 priority per port.
+		 */
+		adapter->params.arch.cng_ch_bits_log = 2;
 		break;
 	case CHELSIO_T6:
 		adapter->params.chip |= CHELSIO_CHIP_CODE(CHELSIO_T6, pl_rev);
@@ -5044,6 +5036,10 @@ int t4_prep_adapter(struct adapter *adapter)
 		adapter->params.arch.mps_rplc_size = 256;
 		adapter->params.arch.nchan = 2;
 		adapter->params.arch.vfcount = 256;
+		/* Congestion map is for 2 channels so that
+		 * MPS can have 8 priority per port.
+		 */
+		adapter->params.arch.cng_ch_bits_log = 3;
 		break;
 	default:
 		dev_err(adapter, "%s: Device %d is not supported\n",
@@ -5210,8 +5206,8 @@ int t4_init_sge_params(struct adapter *adapter)
  */
 int t4_init_tp_params(struct adapter *adap)
 {
-	int chan;
-	u32 v;
+	int chan, ret;
+	u32 param, v;
 
 	v = t4_read_reg(adap, A_TP_TIMER_RESOLUTION);
 	adap->params.tp.tre = G_TIMERRESOLUTION(v);
@@ -5222,11 +5218,47 @@ int t4_init_tp_params(struct adapter *adap)
 		adap->params.tp.tx_modq[chan] = chan;
 
 	/*
-	 * Cache the adapter's Compressed Filter Mode and global Incress
+	 * Cache the adapter's Compressed Filter Mode/Mask and global Ingress
 	 * Configuration.
 	 */
-	t4_read_indirect(adap, A_TP_PIO_ADDR, A_TP_PIO_DATA,
-			 &adap->params.tp.vlan_pri_map, 1, A_TP_VLAN_PRI_MAP);
+	param = (V_FW_PARAMS_MNEM(FW_PARAMS_MNEM_DEV) |
+		 V_FW_PARAMS_PARAM_X(FW_PARAMS_PARAM_DEV_FILTER) |
+		 V_FW_PARAMS_PARAM_Y(FW_PARAM_DEV_FILTER_MODE_MASK));
+
+	/* Read current value */
+	ret = t4_query_params(adap, adap->mbox, adap->pf, 0,
+			      1, &param, &v);
+	if (!ret) {
+		dev_info(adap, "Current filter mode/mask 0x%x:0x%x\n",
+			 G_FW_PARAMS_PARAM_FILTER_MODE(v),
+			 G_FW_PARAMS_PARAM_FILTER_MASK(v));
+		adap->params.tp.vlan_pri_map =
+			G_FW_PARAMS_PARAM_FILTER_MODE(v);
+		adap->params.tp.filter_mask =
+			G_FW_PARAMS_PARAM_FILTER_MASK(v);
+	} else {
+		dev_info(adap,
+			 "Failed to read filter mode/mask via fw api, using indirect-reg-read\n");
+
+		/* In case of older-fw (which doesn't expose the api
+		 * FW_PARAM_DEV_FILTER_MODE_MASK) and newer-driver (which uses
+		 * the fw api) combination, fall-back to older method of reading
+		 * the filter mode from indirect-register
+		 */
+		t4_read_indirect(adap, A_TP_PIO_ADDR, A_TP_PIO_DATA,
+				 &adap->params.tp.vlan_pri_map, 1,
+				 A_TP_VLAN_PRI_MAP);
+
+		/* With the older-fw and newer-driver combination we might run
+		 * into an issue when user wants to use hash filter region but
+		 * the filter_mask is zero, in this case filter_mask validation
+		 * is tough. To avoid that we set the filter_mask same as filter
+		 * mode, which will behave exactly as the older way of ignoring
+		 * the filter mask validation.
+		 */
+		adap->params.tp.filter_mask = adap->params.tp.vlan_pri_map;
+	}
+
 	t4_read_indirect(adap, A_TP_PIO_ADDR, A_TP_PIO_DATA,
 			 &adap->params.tp.ingress_config, 1,
 			 A_TP_INGRESS_CONFIG);
@@ -5253,13 +5285,7 @@ int t4_init_tp_params(struct adapter *adap)
 								F_ETHERTYPE);
 	adap->params.tp.macmatch_shift = t4_filter_field_shift(adap,
 							       F_MACMATCH);
-
-	/*
-	 * If TP_INGRESS_CONFIG.VNID == 0, then TP_VLAN_PRI_MAP.VNIC_ID
-	 * represents the presense of an Outer VLAN instead of a VNIC ID.
-	 */
-	if ((adap->params.tp.ingress_config & F_VNIC) == 0)
-		adap->params.tp.vnic_shift = -1;
+	adap->params.tp.tos_shift = t4_filter_field_shift(adap, F_TOS);
 
 	v = t4_read_reg(adap, LE_3_DB_HASH_MASK_GEN_IPV4_T6_A);
 	adap->params.tp.hash_filter_mask = v;
@@ -5352,6 +5378,7 @@ int t4_port_init(struct adapter *adap, int mbox, int pf, int vf)
 	fw_port_cap32_t pcaps, acaps;
 	enum fw_port_type port_type;
 	struct fw_port_cmd cmd;
+	u8 vivld = 0, vin = 0;
 	int ret, i, j = 0;
 	int mdio_addr;
 	u32 action;
@@ -5423,7 +5450,8 @@ int t4_port_init(struct adapter *adap, int mbox, int pf, int vf)
 			acaps = be32_to_cpu(cmd.u.info32.acaps32);
 		}
 
-		ret = t4_alloc_vi(adap, mbox, j, pf, vf, 1, addr, &rss_size);
+		ret = t4_alloc_vi(adap, mbox, j, pf, vf, 1, addr, &rss_size,
+				  &vivld, &vin);
 		if (ret < 0)
 			return ret;
 
@@ -5431,6 +5459,18 @@ int t4_port_init(struct adapter *adap, int mbox, int pf, int vf)
 		pi->tx_chan = j;
 		pi->rss_size = rss_size;
 		t4_os_set_hw_addr(adap, i, addr);
+
+		/* If fw supports returning the VIN as part of FW_VI_CMD,
+		 * save the returned values.
+		 */
+		if (adap->params.viid_smt_extn_support) {
+			pi->vivld = vivld;
+			pi->vin = vin;
+		} else {
+			/* Retrieve the values from VIID */
+			pi->vivld = G_FW_VIID_VIVLD(pi->viid);
+			pi->vin =  G_FW_VIID_VIN(pi->viid);
+		}
 
 		pi->port_type = port_type;
 		pi->mdio_addr = mdio_addr;

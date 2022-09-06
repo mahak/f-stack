@@ -62,7 +62,7 @@ struct tstamp {
 	uint16_t   sec_msb;
 	uint32_t   sec_lsb;
 	uint32_t   ns;
-}  __attribute__((packed));
+}  __rte_packed;
 
 struct clock_id {
 	uint8_t id[8];
@@ -71,7 +71,7 @@ struct clock_id {
 struct port_id {
 	struct clock_id        clock_id;
 	uint16_t               port_number;
-}  __attribute__((packed));
+}  __rte_packed;
 
 struct ptp_header {
 	uint8_t              msg_type;
@@ -86,30 +86,30 @@ struct ptp_header {
 	uint16_t             seq_id;
 	uint8_t              control;
 	int8_t               log_message_interval;
-} __attribute__((packed));
+} __rte_packed;
 
 struct sync_msg {
 	struct ptp_header   hdr;
 	struct tstamp       origin_tstamp;
-} __attribute__((packed));
+} __rte_packed;
 
 struct follow_up_msg {
 	struct ptp_header   hdr;
 	struct tstamp       precise_origin_tstamp;
 	uint8_t             suffix[0];
-} __attribute__((packed));
+} __rte_packed;
 
 struct delay_req_msg {
 	struct ptp_header   hdr;
 	struct tstamp       origin_tstamp;
-} __attribute__((packed));
+} __rte_packed;
 
 struct delay_resp_msg {
 	struct ptp_header    hdr;
 	struct tstamp        rx_tstamp;
 	struct port_id       req_port_id;
 	uint8_t              suffix[0];
-} __attribute__((packed));
+} __rte_packed;
 
 struct ptp_message {
 	union {
@@ -118,7 +118,7 @@ struct ptp_message {
 		struct delay_req_msg       delay_req;
 		struct follow_up_msg       follow_up;
 		struct delay_resp_msg      delay_resp;
-	} __attribute__((packed));
+	} __rte_packed;
 };
 
 struct ptpv2_data_slave_ordinary {
@@ -372,7 +372,7 @@ parse_sync(struct ptpv2_data_slave_ordinary *ptp_data, uint16_t rx_tstamp_idx)
 }
 
 /*
- * Parse the PTP FOLLOWUP message and send DELAY_REQ to the master clock.
+ * Parse the PTP FOLLOWUP message and send DELAY_REQ to the main clock.
  */
 static void
 parse_fup(struct ptpv2_data_slave_ordinary *ptp_data)
@@ -382,6 +382,7 @@ parse_fup(struct ptpv2_data_slave_ordinary *ptp_data)
 	struct ptp_header *ptp_hdr;
 	struct clock_id *client_clkid;
 	struct ptp_message *ptp_msg;
+	struct delay_req_msg *req_msg;
 	struct rte_mbuf *created_pkt;
 	struct tstamp *origin_tstamp;
 	struct rte_ether_addr eth_multicast = ether_multicast;
@@ -419,7 +420,12 @@ parse_fup(struct ptpv2_data_slave_ordinary *ptp_data)
 
 		created_pkt = rte_pktmbuf_alloc(mbuf_pool);
 		pkt_size = sizeof(struct rte_ether_hdr) +
-			sizeof(struct ptp_message);
+			sizeof(struct delay_req_msg);
+
+		if (rte_pktmbuf_append(created_pkt, pkt_size) == NULL) {
+			rte_pktmbuf_free(created_pkt);
+			return;
+		}
 		created_pkt->data_len = pkt_size;
 		created_pkt->pkt_len = pkt_size;
 		eth_hdr = rte_pktmbuf_mtod(created_pkt, struct rte_ether_hdr *);
@@ -429,22 +435,22 @@ parse_fup(struct ptpv2_data_slave_ordinary *ptp_data)
 		rte_ether_addr_copy(&eth_multicast, &eth_hdr->d_addr);
 
 		eth_hdr->ether_type = htons(PTP_PROTOCOL);
-		ptp_msg = (struct ptp_message *)
-			(rte_pktmbuf_mtod(created_pkt, char *) +
-			sizeof(struct rte_ether_hdr));
+		req_msg = rte_pktmbuf_mtod_offset(created_pkt,
+			struct delay_req_msg *, sizeof(struct
+			rte_ether_hdr));
 
-		ptp_msg->delay_req.hdr.seq_id = htons(ptp_data->seqID_SYNC);
-		ptp_msg->delay_req.hdr.msg_type = DELAY_REQ;
-		ptp_msg->delay_req.hdr.ver = 2;
-		ptp_msg->delay_req.hdr.control = 1;
-		ptp_msg->delay_req.hdr.log_message_interval = 127;
-		ptp_msg->delay_req.hdr.message_length =
+		req_msg->hdr.seq_id = htons(ptp_data->seqID_SYNC);
+		req_msg->hdr.msg_type = DELAY_REQ;
+		req_msg->hdr.ver = 2;
+		req_msg->hdr.control = 1;
+		req_msg->hdr.log_message_interval = 127;
+		req_msg->hdr.message_length =
 			htons(sizeof(struct delay_req_msg));
-		ptp_msg->delay_req.hdr.domain_number = ptp_hdr->domain_number;
+		req_msg->hdr.domain_number = ptp_hdr->domain_number;
 
 		/* Set up clock id. */
 		client_clkid =
-			&ptp_msg->delay_req.hdr.source_port_id.clock_id;
+			&req_msg->hdr.source_port_id.clock_id;
 
 		client_clkid->id[0] = eth_hdr->s_addr.addr_bytes[0];
 		client_clkid->id[1] = eth_hdr->s_addr.addr_bytes[1];
@@ -596,17 +602,13 @@ parse_ptp_frames(uint16_t portid, struct rte_mbuf *m) {
  * The lcore main. This is the main thread that does the work, reading from an
  * input port and writing to an output port.
  */
-static __attribute__((noreturn)) void
+static __rte_noreturn void
 lcore_main(void)
 {
 	uint16_t portid;
 	unsigned nb_rx;
 	struct rte_mbuf *m;
 
-	/*
-	 * Check that the port is on the same NUMA node as the polling thread
-	 * for best performance.
-	 */
 	printf("\nCore %u Waiting for SYNC packets. [Ctrl+C to quit]\n",
 			rte_lcore_id());
 
@@ -650,10 +652,7 @@ ptp_parse_portmask(const char *portmask)
 	pm = strtoul(portmask, &end, 16);
 
 	if ((portmask[0] == '\0') || (end == NULL) || (*end != '\0'))
-		return -1;
-
-	if (pm == 0)
-		return -1;
+		return 0;
 
 	return pm;
 }
@@ -785,8 +784,11 @@ main(int argc, char *argv[])
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
 
-	/* Call lcore_main on the master core only. */
+	/* Call lcore_main on the main core only. */
 	lcore_main();
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 
 	return 0;
 }

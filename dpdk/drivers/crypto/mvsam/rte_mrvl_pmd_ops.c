@@ -111,7 +111,7 @@ static const struct rte_cryptodev_capabilities
 					.increment = 1
 				},
 				.digest_size = {
-					.min = 28,
+					.min = 12,
 					.max = 28,
 					.increment = 0
 				},
@@ -232,7 +232,7 @@ static const struct rte_cryptodev_capabilities
 				},
 				.digest_size = {
 					.min = 12,
-					.max = 48,
+					.max = 64,
 					.increment = 4
 				},
 			}, }
@@ -252,7 +252,7 @@ static const struct rte_cryptodev_capabilities
 				},
 				.digest_size = {
 					.min = 12,
-					.max = 48,
+					.max = 64,
 					.increment = 0
 				},
 			}, }
@@ -336,9 +336,9 @@ static const struct rte_cryptodev_capabilities
 					.increment = 0
 				},
 				.aad_size = {
-					.min = 8,
-					.max = 12,
-					.increment = 4
+					.min = 0,
+					.max = 64,
+					.increment = 1
 				},
 				.iv_size = {
 					.min = 12,
@@ -702,17 +702,6 @@ mrvl_crypto_pmd_qp_setup(struct rte_cryptodev *dev, uint16_t qp_id,
 	return -1;
 }
 
-/** Return the number of allocated queue pairs (PMD ops callback).
- *
- * @param dev Pointer to the device structure.
- * @returns Number of allocated queue pairs.
- */
-static uint32_t
-mrvl_crypto_pmd_qp_count(struct rte_cryptodev *dev)
-{
-	return dev->data->nb_queue_pairs;
-}
-
 /** Returns the size of the session structure (PMD ops callback).
  *
  * @param dev Pointer to the device structure [Unused].
@@ -804,7 +793,7 @@ mrvl_crypto_pmd_sym_session_clear(struct rte_cryptodev *dev,
 			MRVL_LOG(ERR, "Error while destroying session!");
 		}
 
-		memset(sess, 0, sizeof(struct mrvl_crypto_session));
+		memset(mrvl_sess, 0, sizeof(struct mrvl_crypto_session));
 		struct rte_mempool *sess_mp = rte_mempool_from_obj(sess_priv);
 		set_sym_session_private_data(sess, index, NULL);
 		rte_mempool_put(sess_mp, sess_priv);
@@ -827,7 +816,6 @@ static struct rte_cryptodev_ops mrvl_crypto_pmd_ops = {
 
 		.queue_pair_setup	= mrvl_crypto_pmd_qp_setup,
 		.queue_pair_release	= mrvl_crypto_pmd_qp_release,
-		.queue_pair_count	= mrvl_crypto_pmd_qp_count,
 
 		.sym_session_get_size	= mrvl_crypto_pmd_sym_session_get_size,
 		.sym_session_configure	= mrvl_crypto_pmd_sym_session_configure,

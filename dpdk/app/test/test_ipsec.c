@@ -544,11 +544,13 @@ struct rte_ipv4_hdr ipv4_outer  = {
 };
 
 static struct rte_mbuf *
-setup_test_string(struct rte_mempool *mpool,
-		const char *string, size_t len, uint8_t blocksize)
+setup_test_string(struct rte_mempool *mpool, const char *string,
+	size_t string_len, size_t len, uint8_t blocksize)
 {
 	struct rte_mbuf *m = rte_pktmbuf_alloc(mpool);
 	size_t t_len = len - (blocksize ? (len % blocksize) : 0);
+
+	RTE_VERIFY(len <= string_len);
 
 	if (m) {
 		memset(m->buf_addr, 0, m->buf_len);
@@ -632,7 +634,8 @@ create_dummy_sec_session(struct ipsec_unitest_params *ut,
 	static struct rte_security_session_conf conf;
 
 	ut->ss[j].security.ses = rte_security_session_create(&dummy_sec_ctx,
-					&conf, qp->mp_session_private);
+					&conf, qp->mp_session,
+					qp->mp_session_private);
 
 	if (ut->ss[j].security.ses == NULL)
 		return -ENOMEM;
@@ -653,7 +656,7 @@ create_crypto_session(struct ipsec_unitest_params *ut,
 	if (s == NULL)
 		return -ENOMEM;
 
-	/* initiliaze SA crypto session for device */
+	/* initialize SA crypto session for device */
 	rc = rte_cryptodev_sym_session_init(dev_id, s,
 			ut->crypto_xforms, qp->mp_session_private);
 	if (rc == 0) {
@@ -743,7 +746,7 @@ create_sa(enum rte_security_session_action_type action_type,
 	ut->ss[j].type = action_type;
 	rc = create_session(ut, &ts->qp_conf, ts->valid_dev, j);
 	if (rc != 0)
-		return TEST_FAILED;
+		return rc;
 
 	rc = rte_ipsec_sa_init(ut->ss[j].sa, &ut->sa_prm, sz);
 	rc = (rc > 0 && (uint32_t)rc <= sz) ? 0 : -EINVAL;
@@ -1246,7 +1249,7 @@ test_ipsec_crypto_inb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
@@ -1348,13 +1351,14 @@ test_ipsec_crypto_outb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate input mbuf data */
 	for (j = 0; j < num_pkts && rc == 0; j++) {
 		ut_params->ibuf[j] = setup_test_string(ts_params->mbuf_pool,
-			null_plain_data, test_cfg[i].pkt_sz, 0);
+			null_plain_data, sizeof(null_plain_data),
+			test_cfg[i].pkt_sz, 0);
 		if (ut_params->ibuf[j] == NULL)
 			rc = TEST_FAILED;
 		else {
@@ -1457,7 +1461,7 @@ test_ipsec_inline_crypto_inb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate inbound mbuf data */
@@ -1472,7 +1476,8 @@ test_ipsec_inline_crypto_inb_burst_null_null(int i)
 			/* Generate test mbuf data */
 			ut_params->obuf[j] = setup_test_string(
 				ts_params->mbuf_pool,
-				null_plain_data, test_cfg[i].pkt_sz, 0);
+				null_plain_data, sizeof(null_plain_data),
+				test_cfg[i].pkt_sz, 0);
 			if (ut_params->obuf[j] == NULL)
 				rc = TEST_FAILED;
 		}
@@ -1535,21 +1540,22 @@ test_ipsec_inline_proto_inb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate inbound mbuf data */
 	for (j = 0; j < num_pkts && rc == 0; j++) {
-		ut_params->ibuf[j] = setup_test_string(
-			ts_params->mbuf_pool,
-			null_plain_data, test_cfg[i].pkt_sz, 0);
+		ut_params->ibuf[j] = setup_test_string(ts_params->mbuf_pool,
+			null_plain_data, sizeof(null_plain_data),
+			test_cfg[i].pkt_sz, 0);
 		if (ut_params->ibuf[j] == NULL)
 			rc = TEST_FAILED;
 		else {
 			/* Generate test mbuf data */
 			ut_params->obuf[j] = setup_test_string(
 				ts_params->mbuf_pool,
-				null_plain_data, test_cfg[i].pkt_sz, 0);
+				null_plain_data, sizeof(null_plain_data),
+				test_cfg[i].pkt_sz, 0);
 			if (ut_params->obuf[j] == NULL)
 				rc = TEST_FAILED;
 		}
@@ -1643,13 +1649,14 @@ test_ipsec_inline_crypto_outb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
 	for (j = 0; j < num_pkts && rc == 0; j++) {
 		ut_params->ibuf[j] = setup_test_string(ts_params->mbuf_pool,
-			null_plain_data, test_cfg[i].pkt_sz, 0);
+			null_plain_data, sizeof(null_plain_data),
+			test_cfg[i].pkt_sz, 0);
 		if (ut_params->ibuf[0] == NULL)
 			rc = TEST_FAILED;
 
@@ -1721,21 +1728,23 @@ test_ipsec_inline_proto_outb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
 	for (j = 0; j < num_pkts && rc == 0; j++) {
 		ut_params->ibuf[j] = setup_test_string(ts_params->mbuf_pool,
-			null_plain_data, test_cfg[i].pkt_sz, 0);
+			null_plain_data, sizeof(null_plain_data),
+			test_cfg[i].pkt_sz, 0);
 		if (ut_params->ibuf[0] == NULL)
 			rc = TEST_FAILED;
 
 		if (rc == 0) {
 			/* Generate test tunneled mbuf data for comparison */
 			ut_params->obuf[j] = setup_test_string(
-					ts_params->mbuf_pool,
-					null_plain_data, test_cfg[i].pkt_sz, 0);
+				ts_params->mbuf_pool, null_plain_data,
+				sizeof(null_plain_data), test_cfg[i].pkt_sz,
+				0);
 			if (ut_params->obuf[j] == NULL)
 				rc = TEST_FAILED;
 		}
@@ -1797,14 +1806,15 @@ test_ipsec_lksd_proto_inb_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
 	for (j = 0; j < num_pkts && rc == 0; j++) {
 		/* packet with sequence number 0 is invalid */
 		ut_params->ibuf[j] = setup_test_string(ts_params->mbuf_pool,
-			null_encrypted_data, test_cfg[i].pkt_sz, 0);
+			null_encrypted_data, sizeof(null_encrypted_data),
+			test_cfg[i].pkt_sz, 0);
 		if (ut_params->ibuf[j] == NULL)
 			rc = TEST_FAILED;
 	}
@@ -1910,7 +1920,7 @@ test_ipsec_replay_inb_inside_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate inbound mbuf data */
@@ -2003,7 +2013,7 @@ test_ipsec_replay_inb_outside_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
@@ -2103,7 +2113,7 @@ test_ipsec_replay_inb_repeat_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
@@ -2204,7 +2214,7 @@ test_ipsec_replay_inb_inside_burst_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate inbound mbuf data */
@@ -2337,7 +2347,7 @@ test_ipsec_crypto_inb_burst_2sa_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa 0 failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* create second rte_ipsec_sa */
@@ -2347,7 +2357,7 @@ test_ipsec_crypto_inb_burst_2sa_null_null(int i)
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa 1 failed, cfg %d\n", i);
 		destroy_sa(0);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */
@@ -2423,7 +2433,7 @@ test_ipsec_crypto_inb_burst_2sa_4grp_null_null(int i)
 			test_cfg[i].replay_win_sz, test_cfg[i].flags, 0);
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa 0 failed, cfg %d\n", i);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* create second rte_ipsec_sa */
@@ -2433,7 +2443,7 @@ test_ipsec_crypto_inb_burst_2sa_4grp_null_null(int i)
 	if (rc != 0) {
 		RTE_LOG(ERR, USER1, "create_sa 1 failed, cfg %d\n", i);
 		destroy_sa(0);
-		return TEST_FAILED;
+		return rc;
 	}
 
 	/* Generate test mbuf data */

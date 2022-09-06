@@ -80,8 +80,17 @@ rte_ipv6_fragment_packet(struct rte_mbuf *pkt_in,
 	uint64_t frag_bytes_remaining;
 
 	/*
+	 * Formal parameter checking.
+	 */
+	if (unlikely(pkt_in == NULL) || unlikely(pkts_out == NULL) ||
+	    unlikely(nb_pkts_out == 0) ||
+	    unlikely(pool_direct == NULL) || unlikely(pool_indirect == NULL) ||
+	    unlikely(mtu_size < RTE_IPV6_MIN_MTU))
+		return -EINVAL;
+
+	/*
 	 * Ensure the IP payload length of all fragments (except the
-	 * the last fragment) are a multiple of 8 bytes per RFC2460.
+	 * last fragment) are a multiple of 8 bytes per RFC2460.
 	 */
 
 	frag_size = mtu_size - sizeof(struct rte_ipv6_hdr) -

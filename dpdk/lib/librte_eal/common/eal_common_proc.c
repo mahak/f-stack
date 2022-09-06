@@ -29,11 +29,13 @@
 #include <rte_log.h>
 #include <rte_tailq.h>
 
+#include "eal_memcfg.h"
 #include "eal_private.h"
 #include "eal_filesystem.h"
 #include "eal_internal_cfg.h"
 
 static int mp_fd = -1;
+static pthread_t mp_handle_tid;
 static char mp_filter[PATH_MAX];   /* Filter for secondary process sockets */
 static char mp_dir_path[PATH_MAX]; /* The directory path for all mp sockets */
 static pthread_mutex_t mp_mutex_action = PTHREAD_MUTEX_INITIALIZER;
@@ -201,11 +203,13 @@ int
 rte_mp_action_register(const char *name, rte_mp_t action)
 {
 	struct action_entry *entry;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	if (validate_action_name(name) != 0)
 		return -1;
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -235,11 +239,13 @@ void
 rte_mp_action_unregister(const char *name)
 {
 	struct action_entry *entry;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	if (validate_action_name(name) != 0)
 		return;
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		return;
 	}
@@ -276,8 +282,17 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	msgh.msg_control = control;
 	msgh.msg_controllen = sizeof(control);
 
+retry:
 	msglen = recvmsg(mp_fd, &msgh, 0);
+
+	/* zero length message means socket was closed */
+	if (msglen == 0)
+		return 0;
+
 	if (msglen < 0) {
+		if (errno == EINTR)
+			goto retry;
+
 		RTE_LOG(ERR, EAL, "recvmsg failed, %s\n", strerror(errno));
 		return -1;
 	}
@@ -305,7 +320,7 @@ read_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 		RTE_LOG(ERR, EAL, "invalid received data length\n");
 		return -1;
 	}
-	return 0;
+	return msglen;
 }
 
 static void
@@ -315,6 +330,8 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	struct action_entry *entry;
 	struct rte_mp_msg *msg = &m->msg;
 	rte_mp_t action = NULL;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	RTE_LOG(DEBUG, EAL, "msg: %s\n", msg->name);
 
@@ -350,7 +367,7 @@ process_msg(struct mp_msg_internal *m, struct sockaddr_un *s)
 	pthread_mutex_unlock(&mp_mutex_action);
 
 	if (!action) {
-		if (m->type == MP_REQ && !internal_config.init_complete) {
+		if (m->type == MP_REQ && !internal_conf->init_complete) {
 			/* if this is a request, and init is not yet complete,
 			 * and callback wasn't registered, we should tell the
 			 * requester to ignore our existence because we're not
@@ -376,9 +393,14 @@ mp_handle(void *arg __rte_unused)
 	struct mp_msg_internal msg;
 	struct sockaddr_un sa;
 
-	while (1) {
-		if (read_msg(&msg, &sa) == 0)
-			process_msg(&msg, &sa);
+	while (mp_fd >= 0) {
+		int ret;
+
+		ret = read_msg(&msg, &sa);
+		if (ret <= 0)
+			break;
+
+		process_msg(&msg, &sa);
 	}
 
 	return NULL;
@@ -483,14 +505,11 @@ async_reply_handle_thread_unsafe(void *arg)
 	struct pending_request *req = (struct pending_request *)arg;
 	enum async_action action;
 	struct timespec ts_now;
-	struct timeval now;
 
-	if (gettimeofday(&now, NULL) < 0) {
+	if (clock_gettime(CLOCK_MONOTONIC, &ts_now) < 0) {
 		RTE_LOG(ERR, EAL, "Cannot get current time\n");
 		goto no_trigger;
 	}
-	ts_now.tv_nsec = now.tv_usec * 1000;
-	ts_now.tv_sec = now.tv_sec;
 
 	action = process_async_request(req, &ts_now);
 
@@ -563,14 +582,11 @@ open_socket_fd(void)
 }
 
 static void
-close_socket_fd(void)
+close_socket_fd(int fd)
 {
 	char path[PATH_MAX];
 
-	if (mp_fd < 0)
-		return;
-
-	close(mp_fd);
+	close(fd);
 	create_socket_path(peer_name, path, sizeof(path));
 	unlink(path);
 }
@@ -580,12 +596,13 @@ rte_mp_channel_init(void)
 {
 	char path[PATH_MAX];
 	int dir_fd;
-	pthread_t mp_handle_tid;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	/* in no shared files mode, we do not have secondary processes support,
 	 * so no need to initialize IPC.
 	 */
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC will be disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -639,7 +656,16 @@ rte_mp_channel_init(void)
 void
 rte_mp_channel_cleanup(void)
 {
-	close_socket_fd();
+	int fd;
+
+	if (mp_fd < 0)
+		return;
+
+	fd = mp_fd;
+	mp_fd = -1;
+	pthread_cancel(mp_handle_tid);
+	pthread_join(mp_handle_tid, NULL);
+	close_socket_fd(fd);
 }
 
 /**
@@ -804,10 +830,13 @@ check_input(const struct rte_mp_msg *msg)
 int
 rte_mp_sendmsg(struct rte_mp_msg *msg)
 {
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
+
 	if (check_input(msg) != 0)
 		return -1;
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
@@ -884,6 +913,7 @@ mp_request_sync(const char *dst, struct rte_mp_msg *req,
 	       struct rte_mp_reply *reply, const struct timespec *ts)
 {
 	int ret;
+	pthread_condattr_t attr;
 	struct rte_mp_msg msg, *tmp;
 	struct pending_request pending_req, *exist;
 
@@ -892,7 +922,9 @@ mp_request_sync(const char *dst, struct rte_mp_msg *req,
 	strlcpy(pending_req.dst, dst, sizeof(pending_req.dst));
 	pending_req.request = req;
 	pending_req.reply = &msg;
-	pthread_cond_init(&pending_req.sync.cond, NULL);
+	pthread_condattr_init(&attr);
+	pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	pthread_cond_init(&pending_req.sync.cond, &attr);
 
 	exist = find_pending_request(dst, req->name);
 	if (exist) {
@@ -955,8 +987,9 @@ rte_mp_request_sync(struct rte_mp_msg *req, struct rte_mp_reply *reply,
 	int dir_fd, ret = -1;
 	DIR *mp_dir;
 	struct dirent *ent;
-	struct timeval now;
-	struct timespec end;
+	struct timespec now, end;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	RTE_LOG(DEBUG, EAL, "request: %s\n", req->name);
 
@@ -967,21 +1000,21 @@ rte_mp_request_sync(struct rte_mp_msg *req, struct rte_mp_reply *reply,
 	if (check_input(req) != 0)
 		goto end;
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
 	}
 
-	if (gettimeofday(&now, NULL) < 0) {
+	if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to get current time\n");
 		rte_errno = errno;
 		goto end;
 	}
 
-	end.tv_nsec = (now.tv_usec * 1000 + ts->tv_nsec) % 1000000000;
+	end.tv_nsec = (now.tv_nsec + ts->tv_nsec) % 1000000000;
 	end.tv_sec = now.tv_sec + ts->tv_sec +
-			(now.tv_usec * 1000 + ts->tv_nsec) / 1000000000;
+			(now.tv_nsec + ts->tv_nsec) / 1000000000;
 
 	/* for secondary process, send request to the primary process only */
 	if (rte_eal_process_type() == RTE_PROC_SECONDARY) {
@@ -1055,22 +1088,24 @@ rte_mp_request_async(struct rte_mp_msg *req, const struct timespec *ts,
 	int dir_fd, ret = 0;
 	DIR *mp_dir;
 	struct dirent *ent;
-	struct timeval now;
+	struct timespec now;
 	struct timespec *end;
 	bool dummy_used = false;
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	RTE_LOG(DEBUG, EAL, "request: %s\n", req->name);
 
 	if (check_input(req) != 0)
 		return -1;
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		rte_errno = ENOTSUP;
 		return -1;
 	}
 
-	if (gettimeofday(&now, NULL) < 0) {
+	if (clock_gettime(CLOCK_MONOTONIC, &now) < 0) {
 		RTE_LOG(ERR, EAL, "Failed to get current time\n");
 		rte_errno = errno;
 		return -1;
@@ -1092,9 +1127,9 @@ rte_mp_request_async(struct rte_mp_msg *req, const struct timespec *ts,
 	end = &param->end;
 	reply = &param->user_reply;
 
-	end->tv_nsec = (now.tv_usec * 1000 + ts->tv_nsec) % 1000000000;
+	end->tv_nsec = (now.tv_nsec + ts->tv_nsec) % 1000000000;
 	end->tv_sec = now.tv_sec + ts->tv_sec +
-			(now.tv_usec * 1000 + ts->tv_nsec) / 1000000000;
+			(now.tv_nsec + ts->tv_nsec) / 1000000000;
 	reply->nb_sent = 0;
 	reply->nb_received = 0;
 	reply->msgs = NULL;
@@ -1198,6 +1233,8 @@ int
 rte_mp_reply(struct rte_mp_msg *msg, const char *peer)
 {
 	RTE_LOG(DEBUG, EAL, "reply: %s\n", msg->name);
+	const struct internal_config *internal_conf =
+		eal_get_internal_configuration();
 
 	if (check_input(msg) != 0)
 		return -1;
@@ -1208,10 +1245,50 @@ rte_mp_reply(struct rte_mp_msg *msg, const char *peer)
 		return -1;
 	}
 
-	if (internal_config.no_shconf) {
+	if (internal_conf->no_shconf) {
 		RTE_LOG(DEBUG, EAL, "No shared files mode enabled, IPC is disabled\n");
 		return 0;
 	}
 
 	return mp_send(msg, peer, MP_REP);
+}
+
+/* Internally, the status of the mp feature is represented as a three-state:
+ * - "unknown" as long as no secondary process attached to a primary process
+ *   and there was no call to rte_mp_disable yet,
+ * - "enabled" as soon as a secondary process attaches to a primary process,
+ * - "disabled" when a primary process successfully called rte_mp_disable,
+ */
+enum mp_status {
+	MP_STATUS_UNKNOWN,
+	MP_STATUS_DISABLED,
+	MP_STATUS_ENABLED,
+};
+
+static bool
+set_mp_status(enum mp_status status)
+{
+	struct rte_mem_config *mcfg = rte_eal_get_configuration()->mem_config;
+	uint8_t expected;
+	uint8_t desired;
+
+	expected = MP_STATUS_UNKNOWN;
+	desired = status;
+	if (__atomic_compare_exchange_n(&mcfg->mp_status, &expected, desired,
+			false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+		return true;
+
+	return __atomic_load_n(&mcfg->mp_status, __ATOMIC_RELAXED) == desired;
+}
+
+bool
+rte_mp_disable(void)
+{
+	return set_mp_status(MP_STATUS_DISABLED);
+}
+
+bool
+__rte_mp_enable(void)
+{
+	return set_mp_status(MP_STATUS_ENABLED);
 }

@@ -5,36 +5,53 @@ project('DPDK', 'C',
 	# Get version number from file.
 	# Fallback to "more" for Windows compatibility.
 	version: run_command(find_program('cat', 'more'),
-		files('VERSION')).stdout().strip(),
+		files('VERSION'), check: true).stdout().strip(),
 	license: 'BSD',
-	default_options: ['buildtype=release', 'default_library=static'],
+	default_options: [
+		'buildtype=release',
+		'default_library=static',
+		'warning_level=2',
+	],
 	meson_version: '>= 0.47.1'
 )
 
 # set up some global vars for compiler, platform, configuration, etc.
 cc = meson.get_compiler('c')
+dpdk_source_root = meson.current_source_dir()
+dpdk_build_root = meson.current_build_dir()
 dpdk_conf = configuration_data()
 dpdk_libraries = []
 dpdk_static_libraries = []
 dpdk_driver_classes = []
 dpdk_drivers = []
 dpdk_extra_ldflags = []
-dpdk_app_link_libraries = []
 dpdk_libs_disabled = []
 dpdk_drvs_disabled = []
 abi_version_file = files('ABI_VERSION')
+
+if host_machine.cpu_family().startswith('x86')
+	arch_subdir = 'x86'
+elif host_machine.cpu_family().startswith('arm') or host_machine.cpu_family().startswith('aarch')
+	arch_subdir = 'arm'
+elif host_machine.cpu_family().startswith('ppc')
+	arch_subdir = 'ppc'
+endif
 
 # configure the build, and make sure configs here and in config folder are
 # able to be included in any file. We also store a global array of include dirs
 # for passing to pmdinfogen scripts
 global_inc = include_directories('.', 'config',
-	'lib/librte_eal/common/include',
-	'lib/librte_eal/@0@/eal/include'.format(host_machine.system()),
+	'lib/librte_eal/include',
+	'lib/librte_eal/@0@/include'.format(host_machine.system()),
+	'lib/librte_eal/@0@/include'.format(arch_subdir),
 )
+
+# do configuration and get tool paths
+subdir('buildtools')
 subdir('config')
 
 # build libs and drivers
-subdir('buildtools')
+subdir('buildtools/pmdinfogen')
 subdir('lib')
 subdir('drivers')
 
@@ -50,7 +67,7 @@ subdir('doc')
 subdir('examples')
 install_subdir('examples',
 	install_dir: get_option('datadir') + '/dpdk',
-	exclude_files: 'meson.build')
+	exclude_files: ex_file_excludes)
 
 # build kernel modules if enabled
 if get_option('enable_kmods')

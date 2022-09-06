@@ -9,7 +9,6 @@
 #define __NETCFG_H
 
 #include <fman.h>
-#include <argp.h>
 
 /* Configuration information related to a specific ethernet port */
 struct fm_eth_port_cfg {
@@ -46,11 +45,13 @@ struct netcfg_interface {
  * cfg_file: FMC config XML file
  * Returns the configuration information in newly allocated memory.
  */
+__rte_internal
 struct netcfg_info *netcfg_acquire(void);
 
 /* cfg_ptr: configuration information pointer.
  * Frees the resources allocated by the configuration layer.
  */
+__rte_internal
 void netcfg_release(struct netcfg_info *cfg_ptr);
 
 #ifdef RTE_LIBRTE_DPAA_DEBUG_DRIVER

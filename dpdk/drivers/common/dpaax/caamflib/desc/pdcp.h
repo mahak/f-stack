@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause or GPL-2.0+
  * Copyright 2008-2013 Freescale Semiconductor, Inc.
- * Copyright 2019-2020 NXP
+ * Copyright 2019-2021 NXP
  */
 
 #ifndef __DESC_PDCP_H__
@@ -42,6 +42,14 @@
  */
 #define PDCP_C_PLANE_SN_MASK		0x1F000000
 #define PDCP_C_PLANE_SN_MASK_BE		0x0000001F
+
+/**
+ * PDCP_7BIT_SN_MASK - This mask is used in the PDCP descriptors for
+ *                              extracting the sequence number (SN) from the
+ *                              PDCP User Plane header.
+ */
+#define PDCP_7BIT_SN_MASK		0x7F000000
+#define PDCP_7BIT_SN_MASK_BE		0x0000007F
 
 /**
  * PDCP_12BIT_SN_MASK - This mask is used in the PDCP descriptors for
@@ -1887,17 +1895,13 @@ pdcp_insert_cplane_snow_zuc_op(struct program *p,
 		return -ENOTSUP;
 	}
 
-	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
-	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
-	    cipherdata->keylen, INLINE_KEY(cipherdata));
-	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
-	    INLINE_KEY(authdata));
-
-	SET_LABEL(p, keyjump);
-
 	if ((rta_sec_era >= RTA_SEC_ERA_8 && sn_size != PDCP_SN_SIZE_18) ||
 		(rta_sec_era == RTA_SEC_ERA_10)) {
 		int pclid;
+		KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+		    cipherdata->keylen, INLINE_KEY(cipherdata));
+		KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+		    INLINE_KEY(authdata));
 
 		if (sn_size == PDCP_SN_SIZE_5)
 			pclid = OP_PCLID_LTE_PDCP_CTRL_MIXED;
@@ -1931,6 +1935,13 @@ pdcp_insert_cplane_snow_zuc_op(struct program *p,
 
 	}
 
+	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
+	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+	    cipherdata->keylen, INLINE_KEY(cipherdata));
+	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+	    INLINE_KEY(authdata));
+
+	SET_LABEL(p, keyjump);
 	SEQLOAD(p, MATH0, offset, length, 0);
 	JUMP(p, 1, LOCAL_JUMP, ALL_TRUE, CALM);
 	MOVEB(p, MATH0, offset, IFIFOAB2, 0, length, IMMED);
@@ -2008,15 +2019,13 @@ pdcp_insert_cplane_aes_zuc_op(struct program *p,
 		return -ENOTSUP;
 	}
 
-	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
-	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
-	    cipherdata->keylen, INLINE_KEY(cipherdata));
-	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
-	    INLINE_KEY(authdata));
-
 	if ((rta_sec_era >= RTA_SEC_ERA_8 && sn_size != PDCP_SN_SIZE_18) ||
 		(rta_sec_era == RTA_SEC_ERA_10)) {
 		int pclid;
+		KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+		    cipherdata->keylen, INLINE_KEY(cipherdata));
+		KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+		    INLINE_KEY(authdata));
 
 		if (sn_size == PDCP_SN_SIZE_5)
 			pclid = OP_PCLID_LTE_PDCP_CTRL_MIXED;
@@ -2050,8 +2059,14 @@ pdcp_insert_cplane_aes_zuc_op(struct program *p,
 		return -ENOTSUP;
 
 	}
+	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
+	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+	    cipherdata->keylen, INLINE_KEY(cipherdata));
+	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+	    INLINE_KEY(authdata));
 
 	SET_LABEL(p, keyjump);
+
 	SEQLOAD(p, MATH0, offset, length, 0);
 	JUMP(p, 1, LOCAL_JUMP, ALL_TRUE, CALM);
 	MOVEB(p, MATH0, offset, IFIFOAB2, 0, length, IMMED);
@@ -2132,15 +2147,13 @@ pdcp_insert_cplane_zuc_snow_op(struct program *p,
 		return -ENOTSUP;
 	}
 
-	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
-	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
-	    cipherdata->keylen, INLINE_KEY(cipherdata));
-	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
-	    INLINE_KEY(authdata));
-
 	if ((rta_sec_era >= RTA_SEC_ERA_8 && sn_size != PDCP_SN_SIZE_18) ||
 		(rta_sec_era == RTA_SEC_ERA_10)) {
 		int pclid;
+		KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+		    cipherdata->keylen, INLINE_KEY(cipherdata));
+		KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+		    INLINE_KEY(authdata));
 
 		if (sn_size == PDCP_SN_SIZE_5)
 			pclid = OP_PCLID_LTE_PDCP_CTRL_MIXED;
@@ -2174,6 +2187,12 @@ pdcp_insert_cplane_zuc_snow_op(struct program *p,
 		return -ENOTSUP;
 
 	}
+	pkeyjump = JUMP(p, keyjump, LOCAL_JUMP, ALL_TRUE, SHRD | SELF | BOTH);
+	KEY(p, KEY1, cipherdata->key_enc_flags, cipherdata->key,
+	    cipherdata->keylen, INLINE_KEY(cipherdata));
+	KEY(p, KEY2, authdata->key_enc_flags, authdata->key, authdata->keylen,
+	    INLINE_KEY(authdata));
+
 	SET_LABEL(p, keyjump);
 	SEQLOAD(p, MATH0, offset, length, 0);
 	JUMP(p, 1, LOCAL_JUMP, ALL_TRUE, CALM);
@@ -3691,9 +3710,10 @@ cnstr_shdsc_pdcp_short_mac(uint32_t *descbuf,
 		break;
 
 	case PDCP_AUTH_TYPE_SNOW:
+		/* IV calculation based on 3GPP specs. 36331, section:5.3.7.4 */
 		iv[0] = 0xFFFFFFFF;
-		iv[1] = swap ? swab32(0x04000000) : 0x04000000;
-		iv[2] = swap ? swab32(0xF8000000) : 0xF8000000;
+		iv[1] = swab32(0x04000000);
+		iv[2] = swab32(0xF8000000);
 
 		KEY(p, KEY2, authdata->key_enc_flags, authdata->key,
 		    authdata->keylen, INLINE_KEY(authdata));
@@ -3770,7 +3790,7 @@ cnstr_shdsc_pdcp_short_mac(uint32_t *descbuf,
 			return -ENOTSUP;
 		}
 		iv[0] = 0xFFFFFFFF;
-		iv[1] = swap ? swab32(0xFC000000) : 0xFC000000;
+		iv[1] = swab32(0xFC000000);
 		iv[2] = 0x00000000; /* unused */
 
 		KEY(p, KEY2, authdata->key_enc_flags, authdata->key,

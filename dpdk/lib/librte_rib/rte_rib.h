@@ -18,6 +18,9 @@
  * Level compressed tree implementation for IPv4 Longest Prefix Match
  */
 
+#include <stdlib.h>
+#include <stdint.h>
+
 #include <rte_compat.h>
 
 #ifdef __cplusplus
@@ -182,7 +185,7 @@ rte_rib_insert(struct rte_rib *rib, uint32_t ip, uint8_t depth);
  */
 __rte_experimental
 int
-rte_rib_get_ip(struct rte_rib_node *node, uint32_t *ip);
+rte_rib_get_ip(const struct rte_rib_node *node, uint32_t *ip);
 
 /**
  * Get a depth from rte_rib_node
@@ -197,7 +200,7 @@ rte_rib_get_ip(struct rte_rib_node *node, uint32_t *ip);
  */
 __rte_experimental
 int
-rte_rib_get_depth(struct rte_rib_node *node, uint8_t *depth);
+rte_rib_get_depth(const struct rte_rib_node *node, uint8_t *depth);
 
 /**
  * Get ext field from the rib node
@@ -226,7 +229,7 @@ rte_rib_get_ext(struct rte_rib_node *node);
  */
 __rte_experimental
 int
-rte_rib_get_nh(struct rte_rib_node *node, uint64_t *nh);
+rte_rib_get_nh(const struct rte_rib_node *node, uint64_t *nh);
 
 /**
  * Set nexthop into the rib node
@@ -258,7 +261,8 @@ rte_rib_set_nh(struct rte_rib_node *node, uint64_t nh);
  */
 __rte_experimental
 struct rte_rib *
-rte_rib_create(const char *name, int socket_id, struct rte_rib_conf *conf);
+rte_rib_create(const char *name, int socket_id,
+	       const struct rte_rib_conf *conf);
 
 /**
  * Find an existing RIB object and return a pointer to it.

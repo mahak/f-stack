@@ -6,6 +6,7 @@
 #include <rte_ethdev.h>
 
 #include "rte_eventdev_pmd.h"
+#include "rte_eventdev_trace.h"
 #include "rte_event_eth_tx_adapter.h"
 
 #define TXA_BATCH_SIZE		32
@@ -223,7 +224,7 @@ txa_service_data_init(void)
 	if (txa_service_data_array == NULL) {
 		txa_service_data_array =
 				txa_memzone_array_get("txa_service_data_array",
-					sizeof(int),
+					sizeof(*txa_service_data_array),
 					RTE_EVENT_ETH_TX_ADAPTER_MAX_INSTANCE);
 		if (txa_service_data_array == NULL)
 			return -ENOMEM;
@@ -285,7 +286,6 @@ txa_service_conf_cb(uint8_t __rte_unused id, uint8_t dev_id,
 		return ret;
 	}
 
-	pc->disable_implicit_release = 0;
 	ret = rte_event_port_setup(dev_id, port_id, pc);
 	if (ret) {
 		RTE_EDEV_LOG_ERR("failed to setup event port %u\n",
@@ -760,10 +760,8 @@ txa_service_queue_add(uint8_t id,
 
 	rte_spinlock_lock(&txa->tx_lock);
 
-	if (txa_service_is_queue_added(txa, eth_dev, tx_queue_id)) {
-		rte_spinlock_unlock(&txa->tx_lock);
-		return 0;
-	}
+	if (txa_service_is_queue_added(txa, eth_dev, tx_queue_id))
+		goto ret_unlock;
 
 	ret = txa_service_queue_array_alloc(txa, eth_dev->data->port_id);
 	if (ret)
@@ -775,6 +773,8 @@ txa_service_queue_add(uint8_t id,
 
 	tdi = &txa->txa_ethdev[eth_dev->data->port_id];
 	tqi = txa_service_queue(txa, eth_dev->data->port_id, tx_queue_id);
+	if (tqi == NULL)
+		goto err_unlock;
 
 	txa_retry = &tqi->txa_retry;
 	txa_retry->id = txa->id;
@@ -790,6 +790,10 @@ txa_service_queue_add(uint8_t id,
 	tdi->nb_queues++;
 	txa->nb_queues++;
 
+ret_unlock:
+	rte_spinlock_unlock(&txa->tx_lock);
+	return 0;
+
 err_unlock:
 	if (txa->nb_queues == 0) {
 		txa_service_queue_array_free(txa,
@@ -798,7 +802,7 @@ err_unlock:
 	}
 
 	rte_spinlock_unlock(&txa->tx_lock);
-	return 0;
+	return -1;
 }
 
 static int
@@ -818,7 +822,7 @@ txa_service_queue_del(uint8_t id,
 		uint16_t i, q, nb_queues;
 		int ret = 0;
 
-		nb_queues = txa->nb_queues;
+		nb_queues = txa->txa_ethdev[port_id].nb_queues;
 		if (nb_queues == 0)
 			return 0;
 
@@ -841,9 +845,10 @@ txa_service_queue_del(uint8_t id,
 
 	txa = txa_service_id_to_data(id);
 
+	rte_spinlock_lock(&txa->tx_lock);
 	tqi = txa_service_queue(txa, port_id, tx_queue_id);
 	if (tqi == NULL || !tqi->added)
-		return 0;
+		goto ret_unlock;
 
 	tb = tqi->tx_buf;
 	tqi->added = 0;
@@ -853,6 +858,9 @@ txa_service_queue_del(uint8_t id,
 	txa->txa_ethdev[port_id].nb_queues--;
 
 	txa_service_queue_array_free(txa, port_id);
+
+ret_unlock:
+	rte_spinlock_unlock(&txa->tx_lock);
 	return 0;
 }
 
@@ -944,7 +952,8 @@ rte_event_eth_tx_adapter_create(uint8_t id, uint8_t dev_id,
 		txa_dev_id_array[id] = TXA_INVALID_DEV_ID;
 		return ret;
 	}
-
+	rte_eventdev_trace_eth_tx_adapter_create(id, dev_id, NULL, port_conf,
+		ret);
 	txa_dev_id_array[id] = dev_id;
 	return 0;
 }
@@ -986,6 +995,8 @@ rte_event_eth_tx_adapter_create_ext(uint8_t id, uint8_t dev_id,
 		return ret;
 	}
 
+	rte_eventdev_trace_eth_tx_adapter_create(id, dev_id, conf_cb, conf_arg,
+		ret);
 	txa_dev_id_array[id] = dev_id;
 	return 0;
 }
@@ -1014,6 +1025,7 @@ rte_event_eth_tx_adapter_free(uint8_t id)
 		ret = txa_service_adapter_free(id);
 	txa_dev_id_array[id] = TXA_INVALID_DEV_ID;
 
+	rte_eventdev_trace_eth_tx_adapter_free(id, ret);
 	return ret;
 }
 
@@ -1045,6 +1057,8 @@ rte_event_eth_tx_adapter_queue_add(uint8_t id,
 	else
 		ret = txa_service_queue_add(id, txa_evdev(id), eth_dev, queue);
 
+	rte_eventdev_trace_eth_tx_adapter_queue_add(id, eth_dev_id, queue,
+		ret);
 	return ret;
 }
 
@@ -1075,6 +1089,8 @@ rte_event_eth_tx_adapter_queue_del(uint8_t id,
 	else
 		ret = txa_service_queue_del(id, eth_dev, queue);
 
+	rte_eventdev_trace_eth_tx_adapter_queue_del(id, eth_dev_id, queue,
+		ret);
 	return ret;
 }
 
@@ -1096,6 +1112,7 @@ rte_event_eth_tx_adapter_start(uint8_t id)
 	ret = txa_dev_start(id) ? txa_dev_start(id)(id, txa_evdev(id)) : 0;
 	if (ret == 0)
 		ret = txa_service_start(id);
+	rte_eventdev_trace_eth_tx_adapter_start(id, ret);
 	return ret;
 }
 
@@ -1156,5 +1173,6 @@ rte_event_eth_tx_adapter_stop(uint8_t id)
 	ret = txa_dev_stop(id) ? txa_dev_stop(id)(id,  txa_evdev(id)) : 0;
 	if (ret == 0)
 		ret = txa_service_stop(id);
+	rte_eventdev_trace_eth_tx_adapter_stop(id, ret);
 	return ret;
 }

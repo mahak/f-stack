@@ -9,7 +9,6 @@
  */
 
 #include <arpa/inet.h>
-#include <assert.h>
 #include <errno.h>
 #include <stdalign.h>
 #include <stddef.h>
@@ -547,7 +546,7 @@ mlx4_flow_item_check(const struct rte_flow_item *item,
 	mask = item->mask ?
 		(const uint8_t *)item->mask :
 		(const uint8_t *)proc->mask_default;
-	assert(mask);
+	MLX4_ASSERT(mask);
 	/*
 	 * Single-pass check to make sure that:
 	 * - Mask is supported, no bits are set outside proc->mask_support.
@@ -714,7 +713,8 @@ fill:
 			flow->internal = 1;
 			continue;
 		}
-		if (flow->promisc || flow->allmulti) {
+		if ((item->type != RTE_FLOW_ITEM_TYPE_VLAN && flow->promisc) ||
+		    flow->allmulti) {
 			msg = "mlx4 does not support additional matching"
 				" criteria combined with indiscriminate"
 				" matching on Ethernet headers";
@@ -792,7 +792,8 @@ fill:
 			rss = action->conf;
 			/* Default RSS configuration if none is provided. */
 			if (rss->key_len) {
-				rss_key = rss->key;
+				rss_key = rss->key ?
+					  rss->key : mlx4_rss_hash_key_default;
 				rss_key_len = rss->key_len;
 			} else {
 				rss_key = mlx4_rss_hash_key_default;
@@ -954,8 +955,8 @@ mlx4_drop_get(struct mlx4_priv *priv)
 	struct mlx4_drop *drop = priv->drop;
 
 	if (drop) {
-		assert(drop->refcnt);
-		assert(drop->priv == priv);
+		MLX4_ASSERT(drop->refcnt);
+		MLX4_ASSERT(drop->priv == priv);
 		++drop->refcnt;
 		return drop;
 	}
@@ -1001,7 +1002,7 @@ error:
 static void
 mlx4_drop_put(struct mlx4_drop *drop)
 {
-	assert(drop->refcnt);
+	MLX4_ASSERT(drop->refcnt);
 	if (--drop->refcnt)
 		return;
 	drop->priv->drop = NULL;
@@ -1046,7 +1047,7 @@ mlx4_flow_toggle(struct mlx4_priv *priv,
 			mlx4_rss_detach(flow->rss);
 		return 0;
 	}
-	assert(flow->ibv_attr);
+	MLX4_ASSERT(flow->ibv_attr);
 	if (!flow->internal &&
 	    !priv->isolated &&
 	    flow->ibv_attr->priority == MLX4_FLOW_PRIORITY_LAST) {
@@ -1112,7 +1113,7 @@ mlx4_flow_toggle(struct mlx4_priv *priv,
 		}
 		qp = priv->drop->qp;
 	}
-	assert(qp);
+	MLX4_ASSERT(qp);
 	if (flow->ibv_flow)
 		return 0;
 	flow->ibv_flow = mlx4_glue->create_flow(qp, flow->ibv_attr);
@@ -1412,10 +1413,11 @@ next_vlan:
 
 			if (!flow->mac)
 				continue;
-			assert(flow->ibv_attr->type == IBV_FLOW_ATTR_NORMAL);
-			assert(flow->ibv_attr->num_of_specs == 1);
-			assert(eth->type == IBV_FLOW_SPEC_ETH);
-			assert(flow->rss);
+			MLX4_ASSERT(flow->ibv_attr->type ==
+				    IBV_FLOW_ATTR_NORMAL);
+			MLX4_ASSERT(flow->ibv_attr->num_of_specs == 1);
+			MLX4_ASSERT(eth->type == IBV_FLOW_SPEC_ETH);
+			MLX4_ASSERT(flow->rss);
 			if (rule_vlan &&
 			    (eth->val.vlan_tag != *rule_vlan ||
 			     eth->mask.vlan_tag != RTE_BE16(0x0fff)))
@@ -1464,13 +1466,13 @@ next_vlan:
 				if (flow->promisc)
 					break;
 			} else {
-				assert(ETH_DEV(priv)->data->all_multicast);
+				MLX4_ASSERT(ETH_DEV(priv)->data->all_multicast);
 				if (flow->allmulti)
 					break;
 			}
 		}
 		if (flow && flow->internal) {
-			assert(flow->rss);
+			MLX4_ASSERT(flow->rss);
 			if (flow->rss->queues != queues ||
 			    memcmp(flow->rss->queue_id, action_rss.queue,
 				   queues * sizeof(flow->rss->queue_id[0])))
@@ -1482,7 +1484,7 @@ next_vlan:
 				pattern[1].spec = NULL;
 				pattern[1].mask = NULL;
 			} else {
-				assert(ETH_DEV(priv)->data->all_multicast);
+				MLX4_ASSERT(ETH_DEV(priv)->data->all_multicast);
 				pattern[1].spec = &eth_allmulti;
 				pattern[1].mask = &eth_allmulti;
 			}
@@ -1494,7 +1496,7 @@ next_vlan:
 				goto error;
 			}
 		}
-		assert(flow->promisc || flow->allmulti);
+		MLX4_ASSERT(flow->promisc || flow->allmulti);
 		flow->select = 1;
 	}
 error:
@@ -1558,7 +1560,7 @@ mlx4_flow_sync(struct mlx4_priv *priv, struct rte_flow_error *error)
 			return ret;
 	}
 	if (!priv->started)
-		assert(!priv->drop);
+		MLX4_ASSERT(!priv->drop);
 	return 0;
 }
 
@@ -1578,7 +1580,7 @@ mlx4_flow_clean(struct mlx4_priv *priv)
 
 	while ((flow = LIST_FIRST(&priv->flows)))
 		mlx4_flow_destroy(ETH_DEV(priv), flow, NULL);
-	assert(LIST_EMPTY(&priv->rss));
+	MLX4_ASSERT(LIST_EMPTY(&priv->rss));
 }
 
 static const struct rte_flow_ops mlx4_flow_ops = {

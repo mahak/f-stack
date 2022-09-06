@@ -1,12 +1,14 @@
-/*-
- *   BSD LICENSE
- *
- *   Copyright(c) 2017 Brocade Communications Systems, Inc.
+/* SPDX-License-Identifier: BSD-3-Clause
+ * Copyright(c) 2017 Brocade Communications Systems, Inc.
  *   Author: Jan Blunck <jblunck@infradead.org>
  */
 
 #ifndef _RTE_ETHDEV_PCI_H_
 #define _RTE_ETHDEV_PCI_H_
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include <rte_malloc.h>
 #include <rte_pci.h>
@@ -43,14 +45,14 @@ rte_eth_copy_pci_info(struct rte_eth_dev *eth_dev,
 		if (pci_dev->driver->drv_flags & RTE_PCI_DRV_INTR_RMV)
 			eth_dev->data->dev_flags |= RTE_ETH_DEV_INTR_RMV;
 
-		eth_dev->data->kdrv = pci_dev->kdrv;
 		eth_dev->data->numa_node = pci_dev->device.numa_node;
 	}
 }
 
 static inline int
-eth_dev_pci_specific_init(struct rte_eth_dev *eth_dev, void *bus_device) {
-	struct rte_pci_device *pci_dev = bus_device;
+eth_dev_pci_specific_init(struct rte_eth_dev *eth_dev, void *bus_device)
+{
+	struct rte_pci_device *pci_dev = (struct rte_pci_device *)bus_device;
 
 	if (!pci_dev)
 		return -ENODEV;
@@ -110,16 +112,6 @@ rte_eth_dev_pci_allocate(struct rte_pci_device *dev, size_t private_data_size)
 	return eth_dev;
 }
 
-static inline void
-rte_eth_dev_pci_release(struct rte_eth_dev *eth_dev)
-{
-	eth_dev->device = NULL;
-	eth_dev->intr_handle = NULL;
-
-	/* free ether device */
-	rte_eth_dev_release_port(eth_dev);
-}
-
 typedef int (*eth_dev_pci_callback_t)(struct rte_eth_dev *eth_dev);
 
 /**
@@ -141,7 +133,7 @@ rte_eth_dev_pci_generic_probe(struct rte_pci_device *pci_dev,
 	RTE_FUNC_PTR_OR_ERR_RET(*dev_init, -EINVAL);
 	ret = dev_init(eth_dev);
 	if (ret)
-		rte_eth_dev_pci_release(eth_dev);
+		rte_eth_dev_release_port(eth_dev);
 	else
 		rte_eth_dev_probing_finish(eth_dev);
 
@@ -164,14 +156,28 @@ rte_eth_dev_pci_generic_remove(struct rte_pci_device *pci_dev,
 	if (!eth_dev)
 		return 0;
 
+	/*
+	 * In secondary process, a released eth device can be found by its name
+	 * in shared memory.
+	 * If the state of the eth device is RTE_ETH_DEV_UNUSED, it means the
+	 * eth device has been released.
+	 */
+	if (rte_eal_process_type() == RTE_PROC_SECONDARY &&
+	    eth_dev->state == RTE_ETH_DEV_UNUSED)
+		return 0;
+
 	if (dev_uninit) {
 		ret = dev_uninit(eth_dev);
 		if (ret)
 			return ret;
 	}
 
-	rte_eth_dev_pci_release(eth_dev);
+	rte_eth_dev_release_port(eth_dev);
 	return 0;
 }
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* _RTE_ETHDEV_PCI_H_ */

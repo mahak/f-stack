@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <rte_common.h>
+#include <rte_bitops.h>
 #include <rte_byteorder.h>
 #include <rte_memzone.h>
 #include <rte_memcpy.h>
@@ -18,7 +19,6 @@
 #include <rte_spinlock.h>
 #include <rte_cycles.h>
 #include <rte_log.h>
-#include <rte_config.h>
 
 typedef uint8_t   u8;
 typedef int8_t    s8;
@@ -117,38 +117,6 @@ extern int hinic_logtype;
 
 #define HINIC_PAGE_SIZE_DPDK	6
 
-static inline int hinic_test_bit(int nr, volatile unsigned long *addr)
-{
-	int res;
-
-	res = ((*addr) & (1UL << nr)) != 0;
-	return res;
-}
-
-static inline void hinic_set_bit(unsigned int nr, volatile unsigned long *addr)
-{
-	__sync_fetch_and_or(addr, (1UL << nr));
-}
-
-static inline void hinic_clear_bit(int nr, volatile unsigned long *addr)
-{
-	__sync_fetch_and_and(addr, ~(1UL << nr));
-}
-
-static inline int hinic_test_and_clear_bit(int nr, volatile unsigned long *addr)
-{
-	unsigned long mask = (1UL << nr);
-
-	return __sync_fetch_and_and(addr, ~mask) & mask;
-}
-
-static inline int hinic_test_and_set_bit(int nr, volatile unsigned long *addr)
-{
-	unsigned long mask = (1UL << nr);
-
-	return __sync_fetch_and_or(addr, mask) & mask;
-}
-
 void *dma_zalloc_coherent(void *dev, size_t size, dma_addr_t *dma_handle,
 			  unsigned int socket_id);
 
@@ -203,6 +171,7 @@ static inline u32 readl(const volatile void *addr)
 #else
 #define CLOCK_TYPE CLOCK_MONOTONIC
 #endif
+#define HINIC_MUTEX_TIMEOUT  10
 
 static inline unsigned long clock_gettime_ms(void)
 {
@@ -257,24 +226,14 @@ static inline int hinic_mutex_destroy(pthread_mutex_t *pthreadmutex)
 static inline int hinic_mutex_lock(pthread_mutex_t *pthreadmutex)
 {
 	int err;
+	struct timespec tout;
 
-	err = pthread_mutex_lock(pthreadmutex);
-	if (!err) {
-		return err;
-	} else if (err == EOWNERDEAD) {
-		PMD_DRV_LOG(ERR, "Mutex lock failed. (ErrorNo=%d)", errno);
-#if defined(__GLIBC__)
-#if __GLIBC_PREREQ(2, 12)
-		(void)pthread_mutex_consistent(pthreadmutex);
-#else
-		(void)pthread_mutex_consistent_np(pthreadmutex);
-#endif
-#else
-		(void)pthread_mutex_consistent(pthreadmutex);
-#endif
-	} else {
-		PMD_DRV_LOG(ERR, "Mutex lock failed. (ErrorNo=%d)", errno);
-	}
+	(void)clock_gettime(CLOCK_TYPE, &tout);
+
+	tout.tv_sec += HINIC_MUTEX_TIMEOUT;
+	err = pthread_mutex_timedlock(pthreadmutex, &tout);
+	if (err)
+		PMD_DRV_LOG(ERR, "Mutex lock failed. (ErrorNo=%d)", err);
 
 	return err;
 }

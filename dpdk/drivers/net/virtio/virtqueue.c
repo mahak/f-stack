@@ -13,7 +13,7 @@
 /*
  * Two types of mbuf to be cleaned:
  * 1) mbuf that has been consumed by backend but not used by virtio.
- * 2) mbuf that hasn't been consued by backend.
+ * 2) mbuf that hasn't been consumed by backend.
  */
 struct rte_mbuf *
 virtqueue_detach_unused(struct virtqueue *vq)
@@ -32,7 +32,8 @@ virtqueue_detach_unused(struct virtqueue *vq)
 	end = (vq->vq_avail_idx + vq->vq_free_cnt) & (vq->vq_nentries - 1);
 
 	for (idx = 0; idx < vq->vq_nentries; idx++) {
-		if (hw->use_simple_rx && type == VTNET_RQ) {
+		if (hw->use_vec_rx && !vtpci_packed_queue(hw) &&
+		    type == VTNET_RQ) {
 			if (start <= end && idx >= start && idx < end)
 				continue;
 			if (start > end && (idx >= start || idx < end))
@@ -92,12 +93,12 @@ virtqueue_rxvq_flush_split(struct virtqueue *vq)
 	uint16_t used_idx, desc_idx;
 	uint16_t nb_used, i;
 
-	nb_used = VIRTQUEUE_NUSED(vq);
+	nb_used = virtqueue_nused(vq);
 
 	for (i = 0; i < nb_used; i++) {
 		used_idx = vq->vq_used_cons_idx & (vq->vq_nentries - 1);
 		uep = &vq->vq_split.ring.used->ring[used_idx];
-		if (hw->use_simple_rx) {
+		if (hw->use_vec_rx) {
 			desc_idx = used_idx;
 			rte_pktmbuf_free(vq->sw_ring[desc_idx]);
 			vq->vq_free_cnt++;
@@ -121,7 +122,7 @@ virtqueue_rxvq_flush_split(struct virtqueue *vq)
 		vq->vq_used_cons_idx++;
 	}
 
-	if (hw->use_simple_rx) {
+	if (hw->use_vec_rx) {
 		while (vq->vq_free_cnt >= RTE_VIRTIO_VPMD_RX_REARM_THRESH) {
 			virtio_rxq_rearm_vec(rxq);
 			if (virtqueue_kick_prepare(vq))
@@ -185,6 +186,8 @@ virtqueue_txvq_reset_packed(struct virtqueue *vq)
 	struct vq_desc_extra *dxp;
 	struct virtnet_tx *txvq;
 	uint16_t desc_idx;
+	struct virtio_tx_region *txr;
+	struct vring_packed_desc *start_dp;
 
 	vq->vq_used_cons_idx = 0;
 	vq->vq_desc_head_idx = 0;
@@ -197,6 +200,7 @@ virtqueue_txvq_reset_packed(struct virtqueue *vq)
 	vq->vq_packed.event_flags_shadow = 0;
 
 	txvq = &vq->txq;
+	txr = txvq->virtio_net_hdr_mz->addr;
 	memset(txvq->mz->addr, 0, txvq->mz->len);
 	memset(txvq->virtio_net_hdr_mz->addr, 0,
 		txvq->virtio_net_hdr_mz->len);
@@ -206,6 +210,17 @@ virtqueue_txvq_reset_packed(struct virtqueue *vq)
 		if (dxp->cookie != NULL) {
 			rte_pktmbuf_free(dxp->cookie);
 			dxp->cookie = NULL;
+		}
+
+		if (vtpci_with_feature(vq->hw, VIRTIO_RING_F_INDIRECT_DESC)) {
+			/* first indirect descriptor is always the tx header */
+			start_dp = txr[desc_idx].tx_packed_indir;
+			vring_desc_init_indirect_packed(start_dp,
+							RTE_DIM(txr[desc_idx].tx_packed_indir));
+			start_dp->addr = txvq->virtio_net_hdr_mem
+					 + desc_idx * sizeof(*txr)
+					 + offsetof(struct virtio_tx_region, tx_hdr);
+			start_dp->len = vq->hw->vtnet_hdr_size;
 		}
 	}
 

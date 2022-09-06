@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright 2018 NXP
+ * Copyright 2018-2021 NXP
  */
 
 #ifndef _DPAAX_IOVA_TABLE_H_
@@ -61,12 +61,16 @@ extern struct dpaax_iova_table *dpaax_iova_table_p;
 #define DPAAX_MEM_SPLIT_MASK_OFF (DPAAX_MEM_SPLIT - 1) /**< Offset */
 
 /* APIs exposed */
+__rte_internal
 int dpaax_iova_table_populate(void);
+__rte_internal
 void dpaax_iova_table_depopulate(void);
+__rte_internal
 int dpaax_iova_table_update(phys_addr_t paddr, void *vaddr, size_t length);
+__rte_internal
 void dpaax_iova_table_dump(void);
 
-static inline void *dpaax_iova_table_get_va(phys_addr_t paddr) __attribute__((hot));
+static inline void *dpaax_iova_table_get_va(phys_addr_t paddr) __rte_hot;
 
 static inline void *
 dpaax_iova_table_get_va(phys_addr_t paddr) {
@@ -97,6 +101,12 @@ dpaax_iova_table_get_va(phys_addr_t paddr) {
 
 		/* paddr > entry->start && paddr <= entry->(start+len) */
 		index = (paddr_align - entry[i].start)/DPAAX_MEM_SPLIT;
+		/* paddr is within range, but no vaddr entry ever written
+		 * at index
+		 */
+		if ((void *)(uintptr_t)entry[i].pages[index] == NULL)
+			return NULL;
+
 		vaddr = (void *)((uintptr_t)entry[i].pages[index] + offset);
 		break;
 	} while (1);

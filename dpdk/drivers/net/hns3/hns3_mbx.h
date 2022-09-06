@@ -1,11 +1,9 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2018-2019 Hisilicon Limited.
+ * Copyright(c) 2018-2021 HiSilicon Limited.
  */
 
 #ifndef _HNS3_MBX_H_
 #define _HNS3_MBX_H_
-
-#define HNS3_MBX_VF_MSG_DATA_NUM	16
 
 enum HNS3_MBX_OPCODE {
 	HNS3_MBX_RESET = 0x01,          /* (VF -> PF) assert reset */
@@ -24,7 +22,7 @@ enum HNS3_MBX_OPCODE {
 	HNS3_MBX_GET_RETA,              /* (VF -> PF) get RETA */
 	HNS3_MBX_GET_RSS_KEY,           /* (VF -> PF) get RSS key */
 	HNS3_MBX_GET_MAC_ADDR,          /* (VF -> PF) get MAC addr */
-	HNS3_MBX_PF_VF_RESP,            /* (PF -> VF) generate respone to VF */
+	HNS3_MBX_PF_VF_RESP,            /* (PF -> VF) generate response to VF */
 	HNS3_MBX_GET_BDNUM,             /* (VF -> PF) get BD num */
 	HNS3_MBX_GET_BUFSIZE,           /* (VF -> PF) get buffer size */
 	HNS3_MBX_GET_STREAMID,          /* (VF -> PF) get stream id */
@@ -39,6 +37,10 @@ enum HNS3_MBX_OPCODE {
 	HNS3_MBX_SET_ALIVE,             /* (VF -> PF) set alive state */
 	HNS3_MBX_SET_MTU,               /* (VF -> PF) set mtu */
 	HNS3_MBX_GET_QID_IN_PF,         /* (VF -> PF) get queue id in pf */
+
+	HNS3_MBX_PUSH_VLAN_INFO = 34,   /* (PF -> VF) push port base vlan */
+
+	HNS3_MBX_PUSH_PROMISC_INFO = 36, /* (PF -> VF) push vf promisc info */
 
 	HNS3_MBX_HANDLE_VF_TBL = 38,    /* (VF -> PF) store/clear hw cfg tbl */
 	HNS3_MBX_GET_RING_VECTOR_MAP,   /* (VF -> PF) get ring-to-vector map */
@@ -60,6 +62,7 @@ enum hns3_mbx_vlan_cfg_subcode {
 	HNS3_MBX_VLAN_FILTER = 0,               /* set vlan filter */
 	HNS3_MBX_VLAN_TX_OFF_CFG,               /* set tx side vlan offload */
 	HNS3_MBX_VLAN_RX_OFF_CFG,               /* set rx side vlan offload */
+	HNS3_MBX_GET_PORT_BASE_VLAN_STATE = 4,  /* get port based vlan state */
 };
 
 enum hns3_mbx_tbl_cfg_subcode {
@@ -75,15 +78,27 @@ enum hns3_mbx_link_fail_subcode {
 
 #define HNS3_MBX_MAX_MSG_SIZE	16
 #define HNS3_MBX_MAX_RESP_DATA_SIZE	8
-#define HNS3_MBX_RING_MAP_BASIC_MSG_NUM	3
-#define HNS3_MBX_RING_NODE_VARIABLE_NUM	3
+
+enum {
+	HNS3_MBX_RESP_MATCHING_SCHEME_OF_ORIGINAL = 0,
+	HNS3_MBX_RESP_MATCHING_SCHEME_OF_MATCH_ID
+};
 
 struct hns3_mbx_resp_status {
 	rte_spinlock_t lock; /* protects against contending sync cmd resp */
+
+	uint8_t matching_scheme;
+
+	/* The following fields used in the matching scheme for original */
 	uint32_t req_msg_data;
 	uint32_t head;
 	uint32_t tail;
 	uint32_t lost;
+
+	/* The following fields used in the matching scheme for match_id */
+	uint16_t match_id;
+	bool received_match_resp;
+
 	int resp_status;
 	uint8_t additional_info[HNS3_MBX_MAX_RESP_DATA_SIZE];
 };
@@ -101,7 +116,8 @@ struct hns3_mbx_vf_to_pf_cmd {
 	uint8_t mbx_need_resp;
 	uint8_t rsv1;
 	uint8_t msg_len;
-	uint8_t rsv2[3];
+	uint8_t rsv2;
+	uint16_t match_id;
 	uint8_t msg[HNS3_MBX_MAX_MSG_SIZE];
 };
 
@@ -109,7 +125,8 @@ struct hns3_mbx_pf_to_vf_cmd {
 	uint8_t dest_vfid;
 	uint8_t rsv[3];
 	uint8_t msg_len;
-	uint8_t rsv1[3];
+	uint8_t rsv1;
+	uint16_t match_id;
 	uint16_t msg[8];
 };
 
@@ -124,12 +141,6 @@ struct hns3_vf_bind_vector_msg {
 	uint8_t vector_id;
 	uint8_t ring_num;
 	struct hns3_ring_chain_param param[HNS3_MBX_MAX_RING_CHAIN_PARAM_NUM];
-};
-
-struct hns3_vf_rst_cmd {
-	uint8_t dest_vfid;
-	uint8_t vf_rst;
-	uint8_t rsv[22];
 };
 
 struct hns3_pf_rst_done_cmd {

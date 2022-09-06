@@ -14,7 +14,7 @@ This document explains how to use DPDK with the Netronome Poll Mode
 Driver (PMD) supporting Netronome's Network Flow Processor 6xxx
 (NFP-6xxx) and Netronome's Flow Processor 4xxx (NFP-4xxx).
 
-NFP is a SRIOV capable device and the PMD driver supports the physical
+NFP is a SRIOV capable device and the PMD supports the physical
 function (PF) and the virtual functions (VFs).
 
 Dependencies
@@ -48,10 +48,6 @@ Although NFP PMD has Netronome´s BSP dependencies, it is possible to
 compile it along with other DPDK PMDs even if no BSP was installed previously.
 Of course, a DPDK app will require such a BSP installed for using the
 NFP PMD, along with a specific NFP firmware application.
-
-Default PMD configuration is at the **common_linux configuration** file:
-
-- **CONFIG_RTE_LIBRTE_NFP_PMD=y**
 
 Once the DPDK is built all the DPDK apps and examples include support for
 the NFP PMD.
@@ -121,15 +117,15 @@ although once they are created, DPDK apps should be able to use them as normal
 PCI ports.
 
 NFP ports belonging to same PF can be seen inside PMD initialization with a
-suffix added to the PCI ID: wwww:xx:yy.z_port_n. For example, a PF with PCI ID
+suffix added to the PCI ID: wwww:xx:yy.z_portn. For example, a PF with PCI ID
 0000:03:00.0 and four ports is seen by the PMD code as:
 
    .. code-block:: console
 
-      0000:03:00.0_port_0
-      0000:03:00.0_port_1
-      0000:03:00.0_port_2
-      0000:03:00.0_port_3
+      0000:03:00.0_port0
+      0000:03:00.0_port1
+      0000:03:00.0_port2
+      0000:03:00.0_port3
 
    .. Note::
 

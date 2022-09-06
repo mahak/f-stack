@@ -219,7 +219,7 @@ vhost_crypto_parse_args(int argc, char **argv)
 
 	argvopt = argv;
 
-	while ((opt = getopt_long(argc, argvopt, "s:",
+	while ((opt = getopt_long(argc, argvopt, "",
 				  lgopts, &option_index)) != EOF) {
 
 		switch (opt) {
@@ -455,6 +455,9 @@ free_resource(void)
 	}
 
 	memset(&options, 0, sizeof(options));
+
+	/* clean up the EAL */
+	rte_eal_cleanup();
 }
 
 int
@@ -588,7 +591,7 @@ main(int argc, char *argv[])
 
 		for (j = 0; j < lo->nb_sockets; j++) {
 			ret = rte_vhost_driver_register(lo->socket_files[j],
-				RTE_VHOST_USER_DEQUEUE_ZERO_COPY);
+				RTE_VHOST_USER_ASYNC_COPY);
 			if (ret < 0) {
 				RTE_LOG(ERR, USER1, "socket %s already exists\n",
 					lo->socket_files[j]);
@@ -598,7 +601,8 @@ main(int argc, char *argv[])
 			rte_vhost_driver_callback_register(lo->socket_files[j],
 				&virtio_crypto_device_ops);
 
-			ret = rte_vhost_driver_start(lo->socket_files[j]);
+			ret = rte_vhost_crypto_driver_start(
+					lo->socket_files[j]);
 			if (ret < 0)  {
 				RTE_LOG(ERR, USER1, "failed to start vhost.\n");
 				goto error_exit;

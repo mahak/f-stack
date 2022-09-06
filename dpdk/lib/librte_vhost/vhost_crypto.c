@@ -35,13 +35,12 @@
 #define VC_LOG_DBG(fmt, args...)
 #endif
 
-#define VIRTIO_CRYPTO_FEATURES ((1 << VIRTIO_F_NOTIFY_ON_EMPTY) |	\
-		(1 << VIRTIO_RING_F_INDIRECT_DESC) |			\
-		(1 << VIRTIO_RING_F_EVENT_IDX) |			\
-		(1 << VIRTIO_CRYPTO_SERVICE_CIPHER) |			\
-		(1 << VIRTIO_CRYPTO_SERVICE_MAC) |			\
-		(1 << VIRTIO_NET_F_CTRL_VQ) |				\
-		(1 << VHOST_USER_PROTOCOL_F_CONFIG))
+#define VIRTIO_CRYPTO_FEATURES ((1ULL << VIRTIO_F_NOTIFY_ON_EMPTY) |	\
+		(1ULL << VIRTIO_RING_F_INDIRECT_DESC) |			\
+		(1ULL << VIRTIO_RING_F_EVENT_IDX) |			\
+		(1ULL << VIRTIO_NET_F_CTRL_VQ) |			\
+		(1ULL << VIRTIO_F_VERSION_1) |				\
+		(1ULL << VHOST_USER_F_PROTOCOL_FEATURES))
 
 #define IOVA_TO_VVA(t, r, a, l, p)					\
 	((t)(uintptr_t)vhost_iova_to_vva(r->dev, r->vq, a, l, p))
@@ -566,94 +565,57 @@ get_data_ptr(struct vhost_crypto_data_req *vc_req,
 	return data;
 }
 
+static __rte_always_inline uint32_t
+copy_data_from_desc(void *dst, struct vhost_crypto_data_req *vc_req,
+	struct vhost_crypto_desc *desc, uint32_t size)
+{
+	uint64_t remain;
+	uint64_t addr;
+
+	remain = RTE_MIN(desc->len, size);
+	addr = desc->addr;
+	do {
+		uint64_t len;
+		void *src;
+
+		len = remain;
+		src = IOVA_TO_VVA(void *, vc_req, addr, &len, VHOST_ACCESS_RO);
+		if (unlikely(src == NULL || len == 0))
+			return 0;
+
+		rte_memcpy(dst, src, len);
+		remain -= len;
+		/* cast is needed for 32-bit architecture */
+		dst = RTE_PTR_ADD(dst, (size_t)len);
+		addr += len;
+	} while (unlikely(remain != 0));
+
+	return RTE_MIN(desc->len, size);
+}
+
+
 static __rte_always_inline int
-copy_data(void *dst_data, struct vhost_crypto_data_req *vc_req,
-		struct vhost_crypto_desc *head,
-		struct vhost_crypto_desc **cur_desc,
-		uint32_t size, uint32_t max_n_descs)
+copy_data(void *data, struct vhost_crypto_data_req *vc_req,
+	struct vhost_crypto_desc *head, struct vhost_crypto_desc **cur_desc,
+	uint32_t size, uint32_t max_n_descs)
 {
 	struct vhost_crypto_desc *desc = *cur_desc;
-	uint64_t remain, addr, dlen, len;
-	uint32_t to_copy;
-	uint8_t *data = dst_data;
-	uint8_t *src;
-	int left = size;
+	uint32_t left = size;
 
-	to_copy = RTE_MIN(desc->len, (uint32_t)left);
-	dlen = to_copy;
-	src = IOVA_TO_VVA(uint8_t *, vc_req, desc->addr, &dlen,
-			VHOST_ACCESS_RO);
-	if (unlikely(!src || !dlen))
-		return -1;
+	do {
+		uint32_t copied;
 
-	rte_memcpy((uint8_t *)data, src, dlen);
-	data += dlen;
-
-	if (unlikely(dlen < to_copy)) {
-		remain = to_copy - dlen;
-		addr = desc->addr + dlen;
-
-		while (remain) {
-			len = remain;
-			src = IOVA_TO_VVA(uint8_t *, vc_req, addr, &len,
-					VHOST_ACCESS_RO);
-			if (unlikely(!src || !len)) {
-				VC_LOG_ERR("Failed to map descriptor");
-				return -1;
-			}
-
-			rte_memcpy(data, src, len);
-			addr += len;
-			remain -= len;
-			data += len;
-		}
-	}
-
-	left -= to_copy;
-
-	while (desc >= head && desc - head < (int)max_n_descs && left) {
-		desc++;
-		to_copy = RTE_MIN(desc->len, (uint32_t)left);
-		dlen = to_copy;
-		src = IOVA_TO_VVA(uint8_t *, vc_req, desc->addr, &dlen,
-				VHOST_ACCESS_RO);
-		if (unlikely(!src || !dlen)) {
-			VC_LOG_ERR("Failed to map descriptor");
+		copied = copy_data_from_desc(data, vc_req, desc, left);
+		if (copied == 0)
 			return -1;
-		}
+		left -= copied;
+		data = RTE_PTR_ADD(data, copied);
+	} while (left != 0 && ++desc < head + max_n_descs);
 
-		rte_memcpy(data, src, dlen);
-		data += dlen;
-
-		if (unlikely(dlen < to_copy)) {
-			remain = to_copy - dlen;
-			addr = desc->addr + dlen;
-
-			while (remain) {
-				len = remain;
-				src = IOVA_TO_VVA(uint8_t *, vc_req, addr, &len,
-						VHOST_ACCESS_RO);
-				if (unlikely(!src || !len)) {
-					VC_LOG_ERR("Failed to map descriptor");
-					return -1;
-				}
-
-				rte_memcpy(data, src, len);
-				addr += len;
-				remain -= len;
-				data += len;
-			}
-		}
-
-		left -= to_copy;
-	}
-
-	if (unlikely(left > 0)) {
-		VC_LOG_ERR("Incorrect virtio descriptor");
+	if (unlikely(left != 0))
 		return -1;
-	}
 
-	if (unlikely(desc - head == (int)max_n_descs))
+	if (unlikely(desc == head + max_n_descs))
 		*cur_desc = NULL;
 	else
 		*cur_desc = desc + 1;
@@ -853,6 +815,7 @@ prepare_sym_cipher_op(struct vhost_crypto *vcrypto, struct rte_crypto_op *op,
 	/* iv */
 	if (unlikely(copy_data(iv_data, vc_req, head, &desc,
 			cipher->para.iv_len, max_n_descs))) {
+		VC_LOG_ERR("Incorrect virtio descriptor");
 		ret = VIRTIO_CRYPTO_BADMSG;
 		goto error_exit;
 	}
@@ -884,6 +847,7 @@ prepare_sym_cipher_op(struct vhost_crypto *vcrypto, struct rte_crypto_op *op,
 		if (unlikely(copy_data(rte_pktmbuf_mtod(m_src, uint8_t *),
 				vc_req, head, &desc, cipher->para.src_data_len,
 				max_n_descs) < 0)) {
+			VC_LOG_ERR("Incorrect virtio descriptor");
 			ret = VIRTIO_CRYPTO_BADMSG;
 			goto error_exit;
 		}
@@ -1007,6 +971,7 @@ prepare_sym_chain_op(struct vhost_crypto *vcrypto, struct rte_crypto_op *op,
 	/* iv */
 	if (unlikely(copy_data(iv_data, vc_req, head, &desc,
 			chain->para.iv_len, max_n_descs) < 0)) {
+		VC_LOG_ERR("Incorrect virtio descriptor");
 		ret = VIRTIO_CRYPTO_BADMSG;
 		goto error_exit;
 	}
@@ -1038,6 +1003,7 @@ prepare_sym_chain_op(struct vhost_crypto *vcrypto, struct rte_crypto_op *op,
 		if (unlikely(copy_data(rte_pktmbuf_mtod(m_src, uint8_t *),
 				vc_req, head, &desc, chain->para.src_data_len,
 				max_n_descs) < 0)) {
+			VC_LOG_ERR("Incorrect virtio descriptor");
 			ret = VIRTIO_CRYPTO_BADMSG;
 			goto error_exit;
 		}
@@ -1122,6 +1088,7 @@ prepare_sym_chain_op(struct vhost_crypto *vcrypto, struct rte_crypto_op *op,
 		if (unlikely(copy_data(digest_addr, vc_req, head, &digest_desc,
 				chain->para.hash_result_len,
 				max_n_descs) < 0)) {
+			VC_LOG_ERR("Incorrect virtio descriptor");
 			ret = VIRTIO_CRYPTO_BADMSG;
 			goto error_exit;
 		}
@@ -1338,13 +1305,15 @@ vhost_crypto_finalize_one_request(struct rte_crypto_op *op,
 	struct rte_mbuf *m_src = op->sym->m_src;
 	struct rte_mbuf *m_dst = op->sym->m_dst;
 	struct vhost_crypto_data_req *vc_req = rte_mbuf_to_priv(m_src);
-	struct vhost_virtqueue *vq = vc_req->vq;
-	uint16_t used_idx = vc_req->desc_idx, desc_idx;
+	struct vhost_virtqueue *vq;
+	uint16_t used_idx, desc_idx;
 
 	if (unlikely(!vc_req)) {
 		VC_LOG_ERR("Failed to retrieve vc_req");
 		return NULL;
 	}
+	vq = vc_req->vq;
+	used_idx = vc_req->desc_idx;
 
 	if (old_vq && (vq != old_vq))
 		return vq;
@@ -1401,6 +1370,27 @@ vhost_crypto_complete_one_vm_requests(struct rte_crypto_op **ops,
 }
 
 int
+rte_vhost_crypto_driver_start(const char *path)
+{
+	uint64_t protocol_features;
+	int ret;
+
+	ret = rte_vhost_driver_set_features(path, VIRTIO_CRYPTO_FEATURES);
+	if (ret)
+		return -1;
+
+	ret = rte_vhost_driver_get_protocol_features(path, &protocol_features);
+	if (ret)
+		return -1;
+	protocol_features |= (1ULL << VHOST_USER_PROTOCOL_F_CONFIG);
+	ret = rte_vhost_driver_set_protocol_features(path, protocol_features);
+	if (ret)
+		return -1;
+
+	return rte_vhost_driver_start(path);
+}
+
+int
 rte_vhost_crypto_create(int vid, uint8_t cryptodev_id,
 		struct rte_mempool *sess_pool,
 		struct rte_mempool *sess_priv_pool,
@@ -1415,13 +1405,6 @@ rte_vhost_crypto_create(int vid, uint8_t cryptodev_id,
 	if (!dev) {
 		VC_LOG_ERR("Invalid vid %i", vid);
 		return -EINVAL;
-	}
-
-	ret = rte_vhost_driver_set_features(dev->ifname,
-			VIRTIO_CRYPTO_FEATURES);
-	if (ret < 0) {
-		VC_LOG_ERR("Error setting features");
-		return -1;
 	}
 
 	vcrypto = rte_zmalloc_socket(NULL, sizeof(*vcrypto),

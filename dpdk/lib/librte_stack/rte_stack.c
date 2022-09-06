@@ -17,8 +17,6 @@
 #include "rte_stack.h"
 #include "stack_pvt.h"
 
-int stack_logtype;
-
 TAILQ_HEAD(rte_stack_list, rte_tailq_entry);
 
 static struct rte_tailq_elem rte_stack_tailq = {
@@ -59,11 +57,18 @@ rte_stack_create(const char *name, unsigned int count, int socket_id,
 	unsigned int sz;
 	int ret;
 
+	if (flags & ~(RTE_STACK_F_LF)) {
+		STACK_LOG_ERR("Unsupported stack flags %#x\n", flags);
+		return NULL;
+	}
+
 #ifdef RTE_ARCH_64
 	RTE_BUILD_BUG_ON(sizeof(struct rte_stack_lf_head) != 16);
-#else
+#endif
+#if !defined(RTE_STACK_LF_SUPPORTED)
 	if (flags & RTE_STACK_F_LF) {
 		STACK_LOG_ERR("Lock-free stack is not supported on your platform\n");
+		rte_errno = ENOTSUP;
 		return NULL;
 	}
 #endif
@@ -189,9 +194,4 @@ rte_stack_lookup(const char *name)
 	return r;
 }
 
-RTE_INIT(librte_stack_init_log)
-{
-	stack_logtype = rte_log_register("lib.stack");
-	if (stack_logtype >= 0)
-		rte_log_set_level(stack_logtype, RTE_LOG_NOTICE);
-}
+RTE_LOG_REGISTER(stack_logtype, lib.stack, NOTICE);

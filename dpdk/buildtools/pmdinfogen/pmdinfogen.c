@@ -1,11 +1,8 @@
-/* Postprocess pmd object files to export hw support
+/* SPDX-License-Identifier: GPL-2.0
+ * Postprocess pmd object files to export hw support
  *
  * Copyright 2016 Neil Horman <nhorman@tuxdriver.com>
  * Based in part on modpost.c from the linux kernel
- *
- * This software may be used and distributed according to the terms
- * of the GNU General Public License V2, incorporated herein by reference.
- *
  */
 
 #include <stdio.h>
@@ -431,7 +428,7 @@ static void output_pmd_info_string(struct elf_info *info, char *outfile)
 
 int main(int argc, char **argv)
 {
-	struct elf_info info = {0};
+	struct elf_info info;
 	int rc = 1;
 
 	if (argc < 3) {
@@ -440,6 +437,7 @@ int main(int argc, char **argv)
 			basename(argv[0]));
 		exit(127);
 	}
+	memset(&info, 0, sizeof(struct elf_info));
 	use_stdin = !strcmp(argv[1], "-");
 	use_stdout = !strcmp(argv[2], "-");
 	parse_elf(&info, argv[1]);

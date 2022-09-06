@@ -29,7 +29,7 @@ struct qat_dev_cmd_param {
 enum qat_comp_num_im_buffers {
 	QAT_NUM_INTERM_BUFS_GEN1 = 12,
 	QAT_NUM_INTERM_BUFS_GEN2 = 20,
-	QAT_NUM_INTERM_BUFS_GEN3 = 20
+	QAT_NUM_INTERM_BUFS_GEN3 = 64
 };
 
 struct qat_device_info {
@@ -118,9 +118,6 @@ extern struct qat_gen_hw_data qat_gen_config[];
 struct qat_pci_device *
 qat_pci_device_allocate(struct rte_pci_device *pci_dev,
 		struct qat_dev_cmd_param *qat_dev_cmd_param);
-
-int
-qat_pci_device_release(struct rte_pci_device *pci_dev);
 
 struct qat_pci_device *
 qat_get_qat_dev_from_pci_dev(struct rte_pci_device *pci_dev);

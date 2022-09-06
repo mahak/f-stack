@@ -133,16 +133,12 @@ static void prepare_header(struct hinic_msg_pf_to_mgmt *pf_to_mgmt,
 static void prepare_mgmt_cmd(u8 *mgmt_cmd, u64 *header, void *msg,
 			     int msg_len)
 {
-	u32 cmd_buf_max = MAX_PF_MGMT_BUF_SIZE;
-
 	memset(mgmt_cmd, 0, MGMT_MSG_RSVD_FOR_DEV);
 
 	mgmt_cmd += MGMT_MSG_RSVD_FOR_DEV;
-	cmd_buf_max -= MGMT_MSG_RSVD_FOR_DEV;
 	memcpy(mgmt_cmd, header, sizeof(*header));
 
 	mgmt_cmd += sizeof(*header);
-	cmd_buf_max -= sizeof(*header);
 	memcpy(mgmt_cmd, msg, msg_len);
 }
 
@@ -470,7 +466,7 @@ hinic_pf_to_mgmt_sync(struct hinic_hwdev *hwdev,
 			       recv_msg->msg_len);
 			*out_size = recv_msg->msg_len;
 		} else {
-			PMD_DRV_LOG(ERR, "Mgmt rsp's msg len:%u overflow.",
+			PMD_DRV_LOG(ERR, "Mgmt rsp's msg len: %u overflow.",
 				recv_msg->msg_len);
 			err = -ERANGE;
 		}
@@ -582,7 +578,7 @@ static void hinic_mgmt_recv_msg_handler(struct hinic_msg_pf_to_mgmt *pf_to_mgmt,
 						buf_out, &out_size);
 		break;
 	default:
-		PMD_DRV_LOG(ERR, "No handler, mod = %d", recv_msg->mod);
+		PMD_DRV_LOG(ERR, "No handler, mod: %d", recv_msg->mod);
 		break;
 	}
 
@@ -615,7 +611,6 @@ static int recv_mgmt_msg_handler(struct hinic_msg_pf_to_mgmt *pf_to_mgmt,
 	void *msg_body = header + sizeof(msg_header);
 	u8 *dest_msg;
 	u8 seq_id, seq_len;
-	u32 msg_buf_max = MAX_PF_MGMT_BUF_SIZE;
 	u8 front_id;
 	u16 msg_id;
 
@@ -626,7 +621,7 @@ static int recv_mgmt_msg_handler(struct hinic_msg_pf_to_mgmt *pf_to_mgmt,
 
 	if (!check_mgmt_seq_id_and_seg_len(recv_msg, seq_id, seq_len, msg_id)) {
 		PMD_DRV_LOG(ERR,
-			"Mgmt msg sequence and segment check fail, "
+			"Mgmt msg sequence and segment check failed, "
 			"func id: 0x%x, front id: 0x%x, current id: 0x%x, seg len: 0x%x "
 			"front msg_id: %d, cur msg_id: %d",
 			hinic_global_func_id(pf_to_mgmt->hwdev),
@@ -635,7 +630,6 @@ static int recv_mgmt_msg_handler(struct hinic_msg_pf_to_mgmt *pf_to_mgmt,
 	}
 
 	dest_msg = (u8 *)recv_msg->msg + seq_id * HINIC_MSG_SEG_LEN;
-	msg_buf_max -= seq_id * HINIC_MSG_SEG_LEN;
 	memcpy(dest_msg, msg_body, seq_len);
 
 	if (!HINIC_MSG_HEADER_GET(msg_header, LAST))
@@ -751,8 +745,7 @@ int hinic_aeq_poll_msg(struct hinic_eq *eq, u32 timeout, void *param)
 
 		event = EQ_ELEM_DESC_GET(aeqe_desc, TYPE);
 		if (EQ_ELEM_DESC_GET(aeqe_desc, SRC)) {
-			PMD_DRV_LOG(ERR, "AEQ sw event not support %d",
-				event);
+			PMD_DRV_LOG(ERR, "AEQ sw event not support %d", event);
 			return -ENODEV;
 
 		} else {

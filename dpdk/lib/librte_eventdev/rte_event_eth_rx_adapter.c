@@ -20,6 +20,7 @@
 
 #include "rte_eventdev.h"
 #include "rte_eventdev_pmd.h"
+#include "rte_eventdev_trace.h"
 #include "rte_event_eth_rx_adapter.h"
 
 #define BATCH_SIZE		32
@@ -762,23 +763,12 @@ rxa_buffer_mbufs(struct rte_event_eth_rx_adapter *rx_adapter,
 	uint32_t rss_mask;
 	uint32_t rss;
 	int do_rss;
-	uint64_t ts;
 	uint16_t nb_cb;
 	uint16_t dropped;
 
 	/* 0xffff ffff if PKT_RX_RSS_HASH is set, otherwise 0 */
 	rss_mask = ~(((m->ol_flags & PKT_RX_RSS_HASH) != 0) - 1);
 	do_rss = !rss_mask && !eth_rx_queue_info->flow_id_mask;
-
-	if ((m->ol_flags & PKT_RX_TIMESTAMP) == 0) {
-		ts = rte_get_tsc_cycles();
-		for (i = 0; i < num; i++) {
-			m = mbufs[i];
-
-			m->timestamp = ts;
-			m->ol_flags |= PKT_RX_TIMESTAMP;
-		}
-	}
 
 	for (i = 0; i < num; i++) {
 		m = mbufs[i];
@@ -1294,12 +1284,11 @@ rxa_create_intr_thread(struct rte_event_eth_rx_adapter *rx_adapter)
 
 	err = rte_ctrl_thread_create(&rx_adapter->rx_intr_thread, thread_name,
 				NULL, rxa_intr_thread, rx_adapter);
-	if (!err) {
-		rte_thread_setname(rx_adapter->rx_intr_thread, thread_name);
+	if (!err)
 		return 0;
-	}
 
 	RTE_EDEV_LOG_ERR("Failed to create interrupt thread err = %d\n", err);
+	rte_free(rx_adapter->epoll_events);
 error:
 	rte_ring_free(rx_adapter->intr_ring);
 	rx_adapter->intr_ring = NULL;
@@ -1998,6 +1987,8 @@ rte_event_eth_rx_adapter_create_ext(uint8_t id, uint8_t dev_id,
 	event_eth_rx_adapter[id] = rx_adapter;
 	if (conf_cb == rxa_default_conf_cb)
 		rx_adapter->default_cb_arg = 1;
+	rte_eventdev_trace_eth_rx_adapter_create(id, dev_id, conf_cb,
+		conf_arg);
 	return 0;
 }
 
@@ -2047,6 +2038,7 @@ rte_event_eth_rx_adapter_free(uint8_t id)
 	rte_free(rx_adapter);
 	event_eth_rx_adapter[id] = NULL;
 
+	rte_eventdev_trace_eth_rx_adapter_free(id);
 	return 0;
 }
 
@@ -2142,6 +2134,8 @@ rte_event_eth_rx_adapter_queue_add(uint8_t id,
 		rte_spinlock_unlock(&rx_adapter->rx_lock);
 	}
 
+	rte_eventdev_trace_eth_rx_adapter_queue_add(id, eth_dev_id,
+		rx_queue_id, queue_conf, ret);
 	if (ret)
 		return ret;
 
@@ -2245,6 +2239,11 @@ rte_event_eth_rx_adapter_queue_del(uint8_t id, uint16_t eth_dev_id,
 		rx_adapter->eth_rx_poll = rx_poll;
 		rx_adapter->wrr_sched = rx_wrr;
 		rx_adapter->wrr_len = nb_wrr;
+		/*
+		 * reset next poll start position (wrr_pos) to avoid buffer
+		 * overrun when wrr_len is reduced in case of queue delete
+		 */
+		rx_adapter->wrr_pos = 0;
 		rx_adapter->num_intr_vec += num_intr_vec;
 
 		if (dev_info->nb_dev_queues == 0) {
@@ -2263,18 +2262,22 @@ unlock_ret:
 				rxa_sw_adapter_queue_count(rx_adapter));
 	}
 
+	rte_eventdev_trace_eth_rx_adapter_queue_del(id, eth_dev_id,
+		rx_queue_id, ret);
 	return ret;
 }
 
 int
 rte_event_eth_rx_adapter_start(uint8_t id)
 {
+	rte_eventdev_trace_eth_rx_adapter_start(id);
 	return rxa_ctrl(id, 1);
 }
 
 int
 rte_event_eth_rx_adapter_stop(uint8_t id)
 {
+	rte_eventdev_trace_eth_rx_adapter_stop(id);
 	return rxa_ctrl(id, 0);
 }
 

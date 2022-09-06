@@ -1,12 +1,12 @@
 ..  SPDX-License-Identifier: BSD-3-Clause
-    Copyright(c) 2018-2019 Hisilicon Limited.
+    Copyright(c) 2018-2019 HiSilicon Limited.
 
 HNS3 Poll Mode Driver
 ===============================
 
-The hns3 PMD (librte_pmd_hns3) provides poll mode driver support
-for the inbuilt Hisilicon Network Subsystem(HNS) network engine
-found in the Hisilicon Kunpeng 920 SoC.
+The hns3 PMD (**librte_net_hns3**) provides poll mode driver support
+for the inbuilt HiSilicon Network Subsystem(HNS) network engine
+found in the HiSilicon Kunpeng 920 SoC.
 
 Features
 --------
@@ -17,32 +17,34 @@ Features of the HNS3 PMD are:
 - Receive Side Scaling (RSS)
 - Packet type information
 - Checksum offload
+- TSO offload
+- LRO offload
 - Promiscuous mode
 - Multicast mode
 - Port hardware statistics
 - Jumbo frames
 - Link state information
 - Interrupt mode for RX
-- VLAN stripping
+- VLAN stripping and inserting
+- QinQ inserting
+- DCB
+- Scattered and gather for TX and RX
+- Vector Poll mode driver
+- Dump register
+- SR-IOV VF
+- Multi-process
+- MAC/VLAN filter
+- MTU update
 - NUMA support
+- Generic flow API
 
 Prerequisites
 -------------
 - Get the information about Kunpeng920 chip using
-  `<http://www.hisilicon.com/en/Products/ProductList/Kunpeng>`_.
+  `<https://www.hisilicon.com/en/products/Kunpeng>`_.
 
 - Follow the DPDK :ref:`Getting Started Guide for Linux <linux_gsg>` to setup the basic DPDK environment.
 
-Pre-Installation Configuration
-------------------------------
-
-Config File Options
-~~~~~~~~~~~~~~~~~~~
-
-The following options can be modified in the ``config`` file.
-Please note that enabling debugging options may affect system performance.
-
-- ``CONFIG_RTE_LIBRTE_HNS3_PMD`` (default ``y``)
 
 Driver compilation and testing
 ------------------------------
