@@ -11395,7 +11395,7 @@ bbr_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
     int32_t nxt_pkt, struct timeval *tv)
 {
 	int32_t thflags, retval;
-	uint32_t cts, lcts;
+	uint32_t cts, lcts = 0;
 	uint32_t tiwin;
 	struct tcpopt to;
 	struct tcp_bbr *bbr;
@@ -11475,6 +11475,7 @@ bbr_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if ((tp->t_flags & TF_RCVD_TSTMP) && !(to.to_flags & TOF_TS) &&
 	    ((thflags & TH_RST) == 0) && (V_tcp_tolerate_missing_ts == 0)) {
 		retval = 0;
+		m_freem(m);
 		goto done_with_input;
 	}
 	/*
@@ -11957,7 +11958,7 @@ bbr_output_wtime(struct tcpcb *tp, const struct timeval *tv)
 	struct socket *so;
 	int32_t len;
 	uint32_t cts;
-	uint32_t recwin, sendwin;
+	uint32_t recwin = 0, sendwin;
 	int32_t sb_offset;
 	int32_t flags, abandon, error = 0;
 	struct tcp_log_buffer *lgb = NULL;
@@ -13488,15 +13489,6 @@ send:
 				th->th_seq = htonl(tp->snd_max);
 				bbr_seq = tp->snd_max;
 			}
-		} else if (flags & TH_RST) {
-			/*
-			 * For a Reset send the last cum ack in sequence
-			 * (this like any other choice may still generate a
-			 * challenge ack, if a ack-update packet is in
-			 * flight).
-			 */
-			th->th_seq = htonl(tp->snd_una);
-			bbr_seq = tp->snd_una;
 		} else {
 			/*
 			 * len == 0 and not persist we use snd_max, sending

@@ -62,7 +62,7 @@ rdma-core library with corresponding kernel drivers is required.
 
 .. code-block:: console
 
-        meson build
+        meson setup build
         ninja -C build
 
 Cross Compilation
@@ -77,12 +77,11 @@ required:
    - libnl-3
    - libnl-route-3
 
-Such header files and libraries can be cross-compiled and installed on to the
-cross toolchain directory like depicted in
-:ref:`arm_cross_build_getting_the_prerequisite_library`, but those can also be
-simply copied from the filesystem of a working BlueField platform. The following
-script can be run on a BlueField platform in order to create a supplementary
-tarball for the cross toolchain.
+Such header files and libraries can be cross-compiled and installed
+in the cross toolchain environment.
+They can also be simply copied from the filesystem of a working BlueField platform.
+The following script can be run on a BlueField platform in order to create
+a supplementary tarball for the cross toolchain.
 
 .. code-block:: console
 
@@ -117,5 +116,5 @@ Then, untar the tarball at the cross toolchain directory on the x86 host.
 
 .. code-block:: console
 
-        meson build --cross-file config/arm/arm64_bluefield_linux_gcc
+        meson setup build --cross-file config/arm/arm64_bluefield_linux_gcc
         ninja -C build

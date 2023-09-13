@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2010-2016 Intel Corporation
+ * Copyright(c) 2010-2021 Intel Corporation
  */
 
 #ifndef __L3_FWD_H__
@@ -28,6 +28,8 @@
 #define MEMPOOL_CACHE_SIZE 256
 #define MAX_RX_QUEUE_PER_LCORE 16
 
+#define VECTOR_SIZE_DEFAULT   MAX_PKT_BURST
+#define VECTOR_TMO_NS_DEFAULT 1E6 /* 1ms */
 /*
  * Try to avoid TX buffering if we have at least MAX_TX_BURST packets to send.
  */
@@ -54,7 +56,7 @@
 /* 32-bit has less address-space for hugepage memory, limit to 1M entries */
 #define L3FWD_HASH_ENTRIES		(1024*1024*1)
 #endif
-#define HASH_ENTRY_NUMBER_DEFAULT	4
+#define HASH_ENTRY_NUMBER_DEFAULT	16
 
 struct mbuf_table {
 	uint16_t len;
@@ -97,6 +99,8 @@ extern uint32_t hash_entry_number;
 extern xmm_t val_eth[RTE_MAX_ETHPORTS];
 
 extern struct lcore_conf lcore_conf[RTE_MAX_LCORE];
+
+extern uint32_t max_pkt_len;
 
 /* Send burst of packets on an output interface */
 static inline int
@@ -184,12 +188,18 @@ is_valid_ipv4_pkt(struct rte_ipv4_hdr *pkt, uint32_t link_len)
 int
 init_mem(uint16_t portid, unsigned int nb_mbuf);
 
-/* Function pointers for LPM or EM functionality. */
+int config_port_max_pkt_len(struct rte_eth_conf *conf,
+			    struct rte_eth_dev_info *dev_info);
+
+/* Function pointers for LPM, EM or FIB functionality. */
 void
 setup_lpm(const int socketid);
 
 void
 setup_hash(const int socketid);
+
+void
+setup_fib(const int socketid);
 
 int
 em_check_ptype(int portid);
@@ -212,6 +222,9 @@ int
 lpm_main_loop(__rte_unused void *dummy);
 
 int
+fib_main_loop(__rte_unused void *dummy);
+
+int
 lpm_event_main_loop_tx_d(__rte_unused void *dummy);
 int
 lpm_event_main_loop_tx_d_burst(__rte_unused void *dummy);
@@ -219,6 +232,14 @@ int
 lpm_event_main_loop_tx_q(__rte_unused void *dummy);
 int
 lpm_event_main_loop_tx_q_burst(__rte_unused void *dummy);
+int
+lpm_event_main_loop_tx_d_vector(__rte_unused void *dummy);
+int
+lpm_event_main_loop_tx_d_burst_vector(__rte_unused void *dummy);
+int
+lpm_event_main_loop_tx_q_vector(__rte_unused void *dummy);
+int
+lpm_event_main_loop_tx_q_burst_vector(__rte_unused void *dummy);
 
 int
 em_event_main_loop_tx_d(__rte_unused void *dummy);
@@ -228,9 +249,34 @@ int
 em_event_main_loop_tx_q(__rte_unused void *dummy);
 int
 em_event_main_loop_tx_q_burst(__rte_unused void *dummy);
+int
+em_event_main_loop_tx_d_vector(__rte_unused void *dummy);
+int
+em_event_main_loop_tx_d_burst_vector(__rte_unused void *dummy);
+int
+em_event_main_loop_tx_q_vector(__rte_unused void *dummy);
+int
+em_event_main_loop_tx_q_burst_vector(__rte_unused void *dummy);
+
+int
+fib_event_main_loop_tx_d(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_d_burst(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_q(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_q_burst(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_d_vector(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_d_burst_vector(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_q_vector(__rte_unused void *dummy);
+int
+fib_event_main_loop_tx_q_burst_vector(__rte_unused void *dummy);
 
 
-/* Return ipv4/ipv6 fwd lookup struct for LPM or EM. */
+/* Return ipv4/ipv6 fwd lookup struct for LPM, EM or FIB. */
 void *
 em_get_ipv4_l3fwd_lookup_struct(const int socketid);
 
@@ -242,5 +288,11 @@ lpm_get_ipv4_l3fwd_lookup_struct(const int socketid);
 
 void *
 lpm_get_ipv6_l3fwd_lookup_struct(const int socketid);
+
+void *
+fib_get_ipv4_l3fwd_lookup_struct(const int socketid);
+
+void *
+fib_get_ipv6_l3fwd_lookup_struct(const int socketid);
 
 #endif  /* __L3_FWD_H__ */

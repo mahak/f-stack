@@ -204,12 +204,12 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 				const __m128i ft_mask =
 					_mm_set1_epi32(0xffffff00);
 				const __m128i fdir_flags =
-					_mm_set1_epi32(PKT_RX_FDIR);
+					_mm_set1_epi32(RTE_MBUF_F_RX_FDIR);
 				const __m128i fdir_all_flags =
-					_mm_set1_epi32(PKT_RX_FDIR |
-						       PKT_RX_FDIR_ID);
+					_mm_set1_epi32(RTE_MBUF_F_RX_FDIR |
+						       RTE_MBUF_F_RX_FDIR_ID);
 				__m128i fdir_id_flags =
-					_mm_set1_epi32(PKT_RX_FDIR_ID);
+					_mm_set1_epi32(RTE_MBUF_F_RX_FDIR_ID);
 
 				/* Extract flow_tag field. */
 				__m128i ftag0 =
@@ -223,7 +223,7 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 
 				ol_flags_mask = _mm_or_si128(ol_flags_mask,
 							     fdir_all_flags);
-				/* Set PKT_RX_FDIR if flow tag is non-zero. */
+				/* Set RTE_MBUF_F_RX_FDIR if flow tag is non-zero. */
 				ol_flags = _mm_or_si128(ol_flags,
 					_mm_andnot_si128(invalid_mask,
 							 fdir_flags));
@@ -260,8 +260,8 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 				const uint8_t pkt_hdr3 =
 					_mm_extract_epi8(mcqe2, 8);
 				const __m128i vlan_mask =
-					_mm_set1_epi32(PKT_RX_VLAN |
-						       PKT_RX_VLAN_STRIPPED);
+					_mm_set1_epi32(RTE_MBUF_F_RX_VLAN |
+						       RTE_MBUF_F_RX_VLAN_STRIPPED);
 				const __m128i cv_mask =
 					_mm_set1_epi32(MLX5_CQE_VLAN_STRIPPED);
 				const __m128i pkt_cv =
@@ -303,7 +303,7 @@ rxq_cq_decompress_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 				}
 			}
 			const __m128i hash_flags =
-				_mm_set1_epi32(PKT_RX_RSS_HASH);
+				_mm_set1_epi32(RTE_MBUF_F_RX_RSS_HASH);
 			const __m128i rearm_flags =
 				_mm_set1_epi32((uint32_t)t_pkt->ol_flags);
 
@@ -381,7 +381,7 @@ rxq_cq_to_ptype_oflags_v(struct mlx5_rxq_data *rxq, __m128i cqes[4],
 {
 	__m128i pinfo0, pinfo1;
 	__m128i pinfo, ptype;
-	__m128i ol_flags = _mm_set1_epi32(rxq->rss_hash * PKT_RX_RSS_HASH |
+	__m128i ol_flags = _mm_set1_epi32(rxq->rss_hash * RTE_MBUF_F_RX_RSS_HASH |
 					  rxq->hw_timestamp * rxq->timestamp_rx_flag);
 	__m128i cv_flags;
 	const __m128i zero = _mm_setzero_si128();
@@ -390,17 +390,17 @@ rxq_cq_to_ptype_oflags_v(struct mlx5_rxq_data *rxq, __m128i cqes[4],
 	const __m128i pinfo_mask = _mm_set1_epi32(0x3);
 	const __m128i cv_flag_sel =
 		_mm_set_epi8(0, 0, 0, 0, 0, 0, 0, 0, 0,
-			     (uint8_t)((PKT_RX_IP_CKSUM_GOOD |
-					PKT_RX_L4_CKSUM_GOOD) >> 1),
+			     (uint8_t)((RTE_MBUF_F_RX_IP_CKSUM_GOOD |
+					RTE_MBUF_F_RX_L4_CKSUM_GOOD) >> 1),
 			     0,
-			     (uint8_t)(PKT_RX_L4_CKSUM_GOOD >> 1),
+			     (uint8_t)(RTE_MBUF_F_RX_L4_CKSUM_GOOD >> 1),
 			     0,
-			     (uint8_t)(PKT_RX_IP_CKSUM_GOOD >> 1),
-			     (uint8_t)(PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED),
+			     (uint8_t)(RTE_MBUF_F_RX_IP_CKSUM_GOOD >> 1),
+			     (uint8_t)(RTE_MBUF_F_RX_VLAN | RTE_MBUF_F_RX_VLAN_STRIPPED),
 			     0);
 	const __m128i cv_mask =
-		_mm_set1_epi32(PKT_RX_IP_CKSUM_GOOD | PKT_RX_L4_CKSUM_GOOD |
-			      PKT_RX_VLAN | PKT_RX_VLAN_STRIPPED);
+		_mm_set1_epi32(RTE_MBUF_F_RX_IP_CKSUM_GOOD | RTE_MBUF_F_RX_L4_CKSUM_GOOD |
+			       RTE_MBUF_F_RX_VLAN | RTE_MBUF_F_RX_VLAN_STRIPPED);
 	const __m128i mbuf_init =
 		_mm_load_si128((__m128i *)&rxq->mbuf_initializer);
 	__m128i rearm0, rearm1, rearm2, rearm3;
@@ -416,12 +416,12 @@ rxq_cq_to_ptype_oflags_v(struct mlx5_rxq_data *rxq, __m128i cqes[4],
 	ptype = _mm_unpacklo_epi64(pinfo0, pinfo1);
 	if (rxq->mark) {
 		const __m128i pinfo_ft_mask = _mm_set1_epi32(0xffffff00);
-		const __m128i fdir_flags = _mm_set1_epi32(PKT_RX_FDIR);
-		__m128i fdir_id_flags = _mm_set1_epi32(PKT_RX_FDIR_ID);
+		const __m128i fdir_flags = _mm_set1_epi32(RTE_MBUF_F_RX_FDIR);
+		__m128i fdir_id_flags = _mm_set1_epi32(RTE_MBUF_F_RX_FDIR_ID);
 		__m128i flow_tag, invalid_mask;
 
 		flow_tag = _mm_and_si128(pinfo, pinfo_ft_mask);
-		/* Check if flow tag is non-zero then set PKT_RX_FDIR. */
+		/* Check if flow tag is non-zero then set RTE_MBUF_F_RX_FDIR. */
 		invalid_mask = _mm_cmpeq_epi32(flow_tag, zero);
 		ol_flags = _mm_or_si128(ol_flags,
 					_mm_andnot_si128(invalid_mask,
@@ -523,7 +523,7 @@ rxq_cq_process_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 {
 	const uint16_t q_n = 1 << rxq->cqe_n;
 	const uint16_t q_mask = q_n - 1;
-	unsigned int pos;
+	unsigned int pos, adj;
 	uint64_t n = 0;
 	uint64_t comp_idx = MLX5_VPMD_DESCS_PER_LOOP;
 	uint16_t nocmp_n = 0;
@@ -591,7 +591,7 @@ rxq_cq_process_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		__m128i pkt_mb0, pkt_mb1, pkt_mb2, pkt_mb3;
 		__m128i op_own, op_own_tmp1, op_own_tmp2;
 		__m128i opcode, owner_mask, invalid_mask;
-		__m128i comp_mask;
+		__m128i comp_mask, mini_mask;
 		__m128i mask;
 #ifdef MLX5_PMD_SOFT_COUNTERS
 		__m128i byte_cnt;
@@ -729,14 +729,23 @@ rxq_cq_process_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 		mask = _mm_sll_epi64(ones, mask);
 		invalid_mask = _mm_or_si128(invalid_mask, mask);
 		/* D.3 check error in opcode. */
+		adj = (comp_idx != MLX5_VPMD_DESCS_PER_LOOP && comp_idx == n);
+		mask = _mm_set_epi64x(0, adj * sizeof(uint16_t) * 8);
+		mini_mask = _mm_sll_epi64(invalid_mask, mask);
 		opcode = _mm_cmpeq_epi32(resp_err_check, opcode);
 		opcode = _mm_packs_epi32(opcode, zero);
-		opcode = _mm_andnot_si128(invalid_mask, opcode);
+		opcode = _mm_andnot_si128(mini_mask, opcode);
 		/* D.4 mark if any error is set */
 		*err |= _mm_cvtsi128_si64(opcode);
 		/* D.5 fill in mbuf - rearm_data and packet_type. */
 		rxq_cq_to_ptype_oflags_v(rxq, cqes, opcode, &pkts[pos]);
-		if (rxq->hw_timestamp) {
+		if (unlikely(rxq->shared)) {
+			pkts[pos]->port = cq[pos].user_index_low;
+			pkts[pos + p1]->port = cq[pos + p1].user_index_low;
+			pkts[pos + p2]->port = cq[pos + p2].user_index_low;
+			pkts[pos + p3]->port = cq[pos + p3].user_index_low;
+		}
+		if (unlikely(rxq->hw_timestamp)) {
 			int offset = rxq->timestamp_offset;
 			if (rxq->rt_timestamp) {
 				struct mlx5_dev_ctx_shared *sh = rxq->sh;
@@ -771,13 +780,17 @@ rxq_cq_process_v(struct mlx5_rxq_data *rxq, volatile struct mlx5_cqe *cq,
 			uint32_t mask = rxq->flow_meta_port_mask;
 
 			*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *) =
-				cq[pos].flow_table_metadata & mask;
+				rte_be_to_cpu_32
+				(cq[pos].flow_table_metadata) &	mask;
 			*RTE_MBUF_DYNFIELD(pkts[pos + 1], offs, uint32_t *) =
-				cq[pos + p1].flow_table_metadata  & mask;
+				rte_be_to_cpu_32
+				(cq[pos + p1].flow_table_metadata) & mask;
 			*RTE_MBUF_DYNFIELD(pkts[pos + 2], offs, uint32_t *) =
-				cq[pos + p2].flow_table_metadata & mask;
+				rte_be_to_cpu_32
+				(cq[pos + p2].flow_table_metadata) & mask;
 			*RTE_MBUF_DYNFIELD(pkts[pos + 3], offs, uint32_t *) =
-				cq[pos + p3].flow_table_metadata & mask;
+				rte_be_to_cpu_32
+				(cq[pos + p3].flow_table_metadata) & mask;
 			if (*RTE_MBUF_DYNFIELD(pkts[pos], offs, uint32_t *))
 				pkts[pos]->ol_flags |= rxq->flow_meta_mask;
 			if (*RTE_MBUF_DYNFIELD(pkts[pos + 1], offs, uint32_t *))

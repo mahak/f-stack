@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: BSD-3-Clause
- * Copyright(c) 2001-2020 Intel Corporation
+ * Copyright(c) 2001-2021 Intel Corporation
  */
 
 #include "iavf_type.h"
@@ -27,6 +27,8 @@ enum iavf_status iavf_set_mac_type(struct iavf_hw *hw)
 			break;
 		case IAVF_DEV_ID_VF:
 		case IAVF_DEV_ID_VF_HV:
+			hw->mac.type = IAVF_MAC_XL710;
+			break;
 		case IAVF_DEV_ID_ADAPTIVE_VF:
 			hw->mac.type = IAVF_MAC_VF;
 			break;

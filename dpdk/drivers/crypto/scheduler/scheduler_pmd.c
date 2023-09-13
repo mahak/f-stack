@@ -4,7 +4,7 @@
 #include <rte_common.h>
 #include <rte_hexdump.h>
 #include <rte_cryptodev.h>
-#include <rte_cryptodev_pmd.h>
+#include <cryptodev_pmd.h>
 #include <rte_bus_vdev.h>
 #include <rte_malloc.h>
 #include <rte_cpuflags.h>
@@ -47,7 +47,8 @@ static const char * const scheduler_valid_params[] = {
 	RTE_CRYPTODEV_VDEV_MAX_NB_QP_ARG,
 	RTE_CRYPTODEV_VDEV_SOCKET_ID,
 	RTE_CRYPTODEV_VDEV_COREMASK,
-	RTE_CRYPTODEV_VDEV_CORELIST
+	RTE_CRYPTODEV_VDEV_CORELIST,
+	NULL
 };
 
 struct scheduler_parse_map {
@@ -228,6 +229,8 @@ cryptodev_scheduler_create(const char *name,
 				"information");
 		return -ENOMEM;
 	}
+
+	rte_cryptodev_pmd_probing_finish(dev);
 
 	return 0;
 }

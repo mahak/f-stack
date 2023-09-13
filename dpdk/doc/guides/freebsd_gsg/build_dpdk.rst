@@ -14,10 +14,11 @@ The following FreeBSD packages are required to build DPDK:
 * meson
 * ninja
 * pkgconf
+* py37-pyelftools
 
 These can be installed using (as root)::
 
-  pkg install meson pkgconf
+  pkg install meson pkgconf py37-pyelftools
 
 To compile the required kernel modules for memory management and working
 with physical NIC devices, the kernel sources for FreeBSD also
@@ -41,7 +42,7 @@ Building DPDK
 The following commands can be used to build and install DPDK on a system.
 The final, install, step generally needs to be run as root::
 
-  meson build
+  meson setup build
   cd build
   ninja
   ninja install

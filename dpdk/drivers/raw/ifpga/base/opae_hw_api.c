@@ -380,7 +380,7 @@ static pthread_mutex_t *opae_adapter_mutex_open(struct opae_adapter *adapter)
 				PROT_READ | PROT_WRITE, MAP_SHARED,
 				shm_id, 0);
 		adapter->lock = (pthread_mutex_t *)ptr;
-		if (ptr) {
+		if (ptr != MAP_FAILED) {
 			dev_info(NULL,
 					"shared memory %s address is %p\n",
 					shm_name, ptr);
@@ -470,6 +470,8 @@ static void opae_adapter_shm_init(struct opae_adapter *adapter)
 	opae_mutex_init(&sd->i2c_mutex);
 	sd->ref_cnt = 0;
 	sd->dtb_size = SHM_BLK_SIZE;
+	sd->rsu_ctrl = 0;
+	sd->rsu_stat = 0;
 }
 
 static void *opae_adapter_shm_alloc(struct opae_adapter *adapter)
@@ -497,7 +499,7 @@ static void *opae_adapter_shm_alloc(struct opae_adapter *adapter)
 		adapter->shm.size = size;
 		adapter->shm.ptr = mmap(NULL, size, PROT_READ | PROT_WRITE,
 							MAP_SHARED, shm_id, 0);
-		if (adapter->shm.ptr) {
+		if (adapter->shm.ptr != MAP_FAILED) {
 			dev_info(NULL,
 					"shared memory %s address is %p\n",
 					shm_name, adapter->shm.ptr);
@@ -961,6 +963,81 @@ opae_mgr_get_board_info(struct opae_manager *mgr,
 
 	if (mgr->ops && mgr->ops->get_board_info)
 		return mgr->ops->get_board_info(mgr, info);
+
+	return -ENOENT;
+}
+
+/**
+ * opae_mgr_get_uuid -  get manager's UUID.
+ * @mgr: targeted manager
+ * @uuid: a pointer to UUID
+ *
+ * Return: 0 on success, otherwise error code.
+ */
+int opae_mgr_get_uuid(struct opae_manager *mgr, struct uuid *uuid)
+{
+	if (!mgr || !uuid)
+		return -EINVAL;
+
+	if (mgr->ops && mgr->ops->get_uuid)
+		return mgr->ops->get_uuid(mgr, uuid);
+
+	return -ENOENT;
+}
+
+/**
+ * opae_mgr_update_flash -  update image in flash.
+ * @mgr: targeted manager
+ * @image: name of image file
+ * @status: status of update
+ *
+ * Return: 0 on success, otherwise error code.
+ */
+int opae_mgr_update_flash(struct opae_manager *mgr, const char *image,
+	uint64_t *status)
+{
+	if (!mgr)
+		return -EINVAL;
+
+	if (mgr->ops && mgr->ops->update_flash)
+		return mgr->ops->update_flash(mgr, image, status);
+
+	return -ENOENT;
+}
+
+/**
+ * opae_stop_flash_update -  stop flash update.
+ * @mgr: targeted manager
+ * @force: make sure the update process is stopped
+ *
+ * Return: 0 on success, otherwise error code.
+ */
+int opae_mgr_stop_flash_update(struct opae_manager *mgr, int force)
+{
+	if (!mgr)
+		return -EINVAL;
+
+	if (mgr->ops && mgr->ops->stop_flash_update)
+		return mgr->ops->stop_flash_update(mgr, force);
+
+	return -ENOENT;
+}
+
+/**
+ * opae_mgr_reload -  reload FPGA.
+ * @mgr: targeted manager
+ * @type: FPGA type
+ * @page: reload from which page
+ *
+ * Return: 0 on success, otherwise error code.
+ */
+int opae_mgr_reload(struct opae_manager *mgr, int type, int page)
+{
+	if (!mgr)
+		return -EINVAL;
+
+	if (mgr->ops && mgr->ops->reload)
+		return mgr->ops->reload(mgr, type, page);
 
 	return -ENOENT;
 }

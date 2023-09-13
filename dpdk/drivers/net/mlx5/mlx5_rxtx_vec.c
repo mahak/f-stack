@@ -19,6 +19,7 @@
 #include "mlx5.h"
 #include "mlx5_utils.h"
 #include "mlx5_rxtx.h"
+#include "mlx5_rx.h"
 #include "mlx5_rxtx_vec.h"
 #include "mlx5_autoconf.h"
 
@@ -50,6 +51,7 @@ rxq_handle_pending_error(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts,
 			 uint16_t pkts_n)
 {
 	uint16_t n = 0;
+	uint16_t skip_cnt;
 	unsigned int i;
 #ifdef MLX5_PMD_SOFT_COUNTERS
 	uint32_t err_bytes = 0;
@@ -73,7 +75,7 @@ rxq_handle_pending_error(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts,
 	rxq->stats.ipackets -= (pkts_n - n);
 	rxq->stats.ibytes -= err_bytes;
 #endif
-	mlx5_rx_err_handle(rxq, 1);
+	mlx5_rx_err_handle(rxq, 1, pkts_n, &skip_cnt);
 	return n;
 }
 
@@ -105,22 +107,27 @@ mlx5_rx_replenish_bulk_mbuf(struct mlx5_rxq_data *rxq)
 			rxq->stats.rx_nombuf += n;
 			return;
 		}
-		for (i = 0; i < n; ++i) {
-			void *buf_addr;
+		if (unlikely(mlx5_mr_btree_len(&rxq->mr_ctrl.cache_bh) > 1)) {
+			for (i = 0; i < n; ++i) {
+				/*
+				 * In order to support the mbufs with external attached
+				 * data buffer we should use the buf_addr pointer
+				 * instead of rte_mbuf_buf_addr(). It touches the mbuf
+				 * itself and may impact the performance.
+				 */
+				void *buf_addr = elts[i]->buf_addr;
 
-			/*
-			 * In order to support the mbufs with external attached
-			 * data buffer we should use the buf_addr pointer
-			 * instead of rte_mbuf_buf_addr(). It touches the mbuf
-			 * itself and may impact the performance.
-			 */
-			buf_addr = elts[i]->buf_addr;
-			wq[i].addr = rte_cpu_to_be_64((uintptr_t)buf_addr +
-						      RTE_PKTMBUF_HEADROOM);
-			/* If there's a single MR, no need to replace LKey. */
-			if (unlikely(mlx5_mr_btree_len(&rxq->mr_ctrl.cache_bh)
-				     > 1))
+				wq[i].addr = rte_cpu_to_be_64((uintptr_t)buf_addr +
+							      RTE_PKTMBUF_HEADROOM);
 				wq[i].lkey = mlx5_rx_mb2mr(rxq, elts[i]);
+			}
+		} else {
+			for (i = 0; i < n; ++i) {
+				void *buf_addr = elts[i]->buf_addr;
+
+				wq[i].addr = rte_cpu_to_be_64((uintptr_t)buf_addr +
+							      RTE_PKTMBUF_HEADROOM);
+			}
 		}
 		rxq->rq_ci += n;
 		/* Prevent overflowing into consumed mbufs. */
@@ -247,8 +254,6 @@ rxq_copy_mprq_mbuf_v(struct mlx5_rxq_data *rxq,
 	}
 	rxq->rq_pi += i;
 	rxq->cq_ci += i;
-	rte_io_wmb();
-	*rxq->cq_db = rte_cpu_to_be_32(rxq->cq_ci);
 	if (rq_ci != rxq->rq_ci) {
 		rxq->rq_ci = rq_ci;
 		rte_io_wmb();
@@ -355,8 +360,6 @@ rxq_burst_v(struct mlx5_rxq_data *rxq, struct rte_mbuf **pkts,
 			rxq->decompressed -= n;
 		}
 	}
-	rte_io_wmb();
-	*rxq->cq_db = rte_cpu_to_be_32(rxq->cq_ci);
 	*no_cq = !rcvd_pkt;
 	return rcvd_pkt;
 }
@@ -384,6 +387,7 @@ mlx5_rx_burst_vec(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 	bool no_cq = false;
 
 	do {
+		err = 0;
 		nb_rx = rxq_burst_v(rxq, pkts + tn, pkts_n - tn,
 				    &err, &no_cq);
 		if (unlikely(err | rxq->err_state))
@@ -391,6 +395,8 @@ mlx5_rx_burst_vec(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		tn += nb_rx;
 		if (unlikely(no_cq))
 			break;
+		rte_io_wmb();
+		*rxq->cq_db = rte_cpu_to_be_32(rxq->cq_ci);
 	} while (tn != pkts_n);
 	return tn;
 }
@@ -518,6 +524,7 @@ mlx5_rx_burst_mprq_vec(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 	bool no_cq = false;
 
 	do {
+		err = 0;
 		nb_rx = rxq_burst_mprq_v(rxq, pkts + tn, pkts_n - tn,
 					 &err, &no_cq);
 		if (unlikely(err | rxq->err_state))
@@ -525,6 +532,8 @@ mlx5_rx_burst_mprq_vec(void *dpdk_rxq, struct rte_mbuf **pkts, uint16_t pkts_n)
 		tn += nb_rx;
 		if (unlikely(no_cq))
 			break;
+		rte_io_wmb();
+		*rxq->cq_db = rte_cpu_to_be_32(rxq->cq_ci);
 	} while (tn != pkts_n);
 	return tn;
 }
@@ -544,7 +553,7 @@ mlx5_rxq_check_vec_support(struct mlx5_rxq_data *rxq)
 	struct mlx5_rxq_ctrl *ctrl =
 		container_of(rxq, struct mlx5_rxq_ctrl, rxq);
 
-	if (!ctrl->priv->config.rx_vec_en || rxq->sges_n != 0)
+	if (!RXQ_PORT(ctrl)->config.rx_vec_en || rxq->sges_n != 0)
 		return -ENOTSUP;
 	if (rxq->lro)
 		return -ENOTSUP;
@@ -572,11 +581,11 @@ mlx5_check_vec_rx_support(struct rte_eth_dev *dev)
 		return -ENOTSUP;
 	/* All the configured queues should support. */
 	for (i = 0; i < priv->rxqs_n; ++i) {
-		struct mlx5_rxq_data *rxq = (*priv->rxqs)[i];
+		struct mlx5_rxq_data *rxq_data = mlx5_rxq_data_get(dev, i);
 
-		if (!rxq)
+		if (!rxq_data)
 			continue;
-		if (mlx5_rxq_check_vec_support(rxq) < 0)
+		if (mlx5_rxq_check_vec_support(rxq_data) < 0)
 			break;
 	}
 	if (i != priv->rxqs_n)

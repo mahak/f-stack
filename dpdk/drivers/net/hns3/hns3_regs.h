@@ -37,6 +37,9 @@
 #define HNS3_FUN_RST_ING		0x20C00
 #define HNS3_GRO_EN_REG			0x28000
 
+#define HNS3_RPU_DROP_CNT_REG		0x28004
+#define HNS3_RXD_ADV_LAYOUT_EN_REG	0x28008
+
 /* Vector0 register bits for reset */
 #define HNS3_VECTOR0_FUNCRESET_INT_B	0
 #define HNS3_VECTOR0_GLOBALRESET_INT_B	5

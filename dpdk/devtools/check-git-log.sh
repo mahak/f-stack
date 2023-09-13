@@ -89,6 +89,12 @@ bad=$(for commit in $commits ; do
 done | sed 's,^,\t,')
 [ -z "$bad" ] || { printf "Wrong headline prefix:\n$bad\n" && failure=true;}
 
+# check headline prefix for libraries
+bad=$(echo "$headlines" | grep --color=always \
+	-e '^lib/' \
+	| sed 's,^,\t,')
+[ -z "$bad" ] || { printf "Wrong headline prefix:\n$bad\n" && failure=true;}
+
 # check headline label for common typos
 bad=$(echo "$headlines" | grep --color=always \
 	-e '^example[:/]' \
@@ -113,7 +119,7 @@ words="$selfdir/words-case.txt"
 for word in $(cat $words); do
 	bad=$(echo "$headlines" | grep -iw $word | grep -vw $word)
 	if [ "$word" = "Tx" ]; then
-		bad=$(echo $bad | grep -v 'OCTEON\ TX')
+		bad=$(echo $bad | grep -v 'OCTEON TX')
 	fi
 	for bad_line in $bad; do
 		bad_word=$(echo $bad_line | cut -d":" -f2 | grep -iwo $word)

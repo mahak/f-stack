@@ -8,7 +8,7 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#include <rte_ethdev_driver.h>
+#include <ethdev_driver.h>
 #include <rte_common.h>
 #include <rte_malloc.h>
 
@@ -16,7 +16,8 @@
 
 #include "mlx5_defs.h"
 #include "mlx5.h"
-#include "mlx5_rxtx.h"
+#include "mlx5_rx.h"
+#include "mlx5_tx.h"
 #include "mlx5_malloc.h"
 
 /**
@@ -106,7 +107,7 @@ mlx5_stats_get(struct rte_eth_dev *dev, struct rte_eth_stats *stats)
 	memset(&tmp, 0, sizeof(tmp));
 	/* Add software counters. */
 	for (i = 0; (i != priv->rxqs_n); ++i) {
-		struct mlx5_rxq_data *rxq = (*priv->rxqs)[i];
+		struct mlx5_rxq_data *rxq = mlx5_rxq_data_get(dev, i);
 
 		if (rxq == NULL)
 			continue;
@@ -187,9 +188,11 @@ mlx5_stats_reset(struct rte_eth_dev *dev)
 	unsigned int i;
 
 	for (i = 0; (i != priv->rxqs_n); ++i) {
-		if ((*priv->rxqs)[i] == NULL)
+		struct mlx5_rxq_data *rxq_data = mlx5_rxq_data_get(dev, i);
+
+		if (rxq_data == NULL)
 			continue;
-		(*priv->rxqs)[i]->stats_reset = (*priv->rxqs)[i]->stats;
+		rxq_data->stats_reset = rxq_data->stats;
 	}
 	for (i = 0; (i != priv->txqs_n); ++i) {
 		struct mlx5_txq_data *txq_data = (*priv->txqs)[i];
@@ -285,10 +288,9 @@ mlx5_xstats_get_names(struct rte_eth_dev *dev,
 
 	if (n >= mlx5_xstats_n && xstats_names) {
 		for (i = 0; i != mlx5_xstats_n; ++i) {
-			strncpy(xstats_names[i].name,
+			strlcpy(xstats_names[i].name,
 				xstats_ctrl->info[i].dpdk_name,
 				RTE_ETH_XSTATS_NAME_SIZE);
-			xstats_names[i].name[RTE_ETH_XSTATS_NAME_SIZE - 1] = 0;
 		}
 	}
 	mlx5_xstats_n = mlx5_txpp_xstats_get_names(dev, xstats_names,

@@ -7,7 +7,7 @@
 #include <rte_common.h>
 #include <rte_hexdump.h>
 #include <rte_cryptodev.h>
-#include <rte_cryptodev_pmd.h>
+#include <cryptodev_pmd.h>
 #include <rte_bus_vdev.h>
 #include <rte_malloc.h>
 #include <rte_cpuflags.h>
@@ -1061,8 +1061,11 @@ process_openssl_auth_encryption_gcm(struct rte_mbuf *mbuf_src, int offset,
 		int srclen, uint8_t *aad, int aadlen, uint8_t *iv,
 		uint8_t *dst, uint8_t *tag, EVP_CIPHER_CTX *ctx)
 {
-	int len = 0, unused = 0;
+	int len = 0;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	int unused = 0;
 	uint8_t empty[] = {};
+#endif
 
 	if (EVP_EncryptInit_ex(ctx, NULL, NULL, NULL, iv) <= 0)
 		goto process_auth_encryption_gcm_err;
@@ -1076,9 +1079,11 @@ process_openssl_auth_encryption_gcm(struct rte_mbuf *mbuf_src, int offset,
 				srclen, ctx, 0))
 			goto process_auth_encryption_gcm_err;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	/* Workaround open ssl bug in version less then 1.0.1f */
 	if (EVP_EncryptUpdate(ctx, empty, &unused, empty, 0) <= 0)
 		goto process_auth_encryption_gcm_err;
+#endif
 
 	if (EVP_EncryptFinal_ex(ctx, dst, &len) <= 0)
 		goto process_auth_encryption_gcm_err;
@@ -1140,8 +1145,11 @@ process_openssl_auth_decryption_gcm(struct rte_mbuf *mbuf_src, int offset,
 		int srclen, uint8_t *aad, int aadlen, uint8_t *iv,
 		uint8_t *dst, uint8_t *tag, EVP_CIPHER_CTX *ctx)
 {
-	int len = 0, unused = 0;
+	int len = 0;
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
+	int unused = 0;
 	uint8_t empty[] = {};
+#endif
 
 	if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, 16, tag) <= 0)
 		goto process_auth_decryption_gcm_err;
@@ -1158,9 +1166,11 @@ process_openssl_auth_decryption_gcm(struct rte_mbuf *mbuf_src, int offset,
 				srclen, ctx, 0))
 			goto process_auth_decryption_gcm_err;
 
+#if OPENSSL_VERSION_NUMBER < 0x10100000L
 	/* Workaround open ssl bug in version less then 1.0.1f */
 	if (EVP_DecryptUpdate(ctx, empty, &unused, empty, 0) <= 0)
 		goto process_auth_decryption_gcm_err;
+#endif
 
 	if (EVP_DecryptFinal_ex(ctx, dst, &len) <= 0)
 		return -EFAULT;
@@ -2215,6 +2225,8 @@ cryptodev_openssl_create(const char *name,
 
 	internals->max_nb_qpairs = init_params->max_nb_queue_pairs;
 
+	rte_cryptodev_pmd_probing_finish(dev);
+
 	return 0;
 
 init_error:
@@ -2280,4 +2292,4 @@ RTE_PMD_REGISTER_PARAM_STRING(CRYPTODEV_NAME_OPENSSL_PMD,
 	"socket_id=<int>");
 RTE_PMD_REGISTER_CRYPTO_DRIVER(openssl_crypto_drv,
 		cryptodev_openssl_pmd_drv.driver, cryptodev_driver_id);
-RTE_LOG_REGISTER(openssl_logtype_driver, pmd.crypto.openssl, INFO);
+RTE_LOG_REGISTER_DEFAULT(openssl_logtype_driver, INFO);

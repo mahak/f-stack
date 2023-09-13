@@ -20,13 +20,13 @@ check_spdx() {
 	echo "--------------------------"
     fi
     git grep -L SPDX-License-Identifier -- \
-	':^.git*' ':^.ci/*' ':^.travis.yml' \
+	':^.git*' ':^.mailmap' ':^.ci/*' ':^.travis.yml' \
 	':^README' ':^MAINTAINERS' ':^VERSION' ':^ABI_VERSION' \
 	':^*/Kbuild' ':^*/README' \
 	':^license/' ':^config/' ':^buildtools/' \
 	':^*.cocci' ':^*.abignore' \
-	':^*.def' ':^*.map' ':^*.ini' ':^*.data' ':^*.cfg' ':^*.txt' \
-	':^*.svg' ':^*.png'\
+	':^*.map' ':^*.ini' ':^*.data' ':^*.json' ':^*.cfg' ':^*.txt' \
+	':^*.svg' ':^*.png' \
 	> $tmpfile
 
     errors=$(wc -l < $tmpfile)

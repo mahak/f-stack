@@ -10861,6 +10861,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	if ((thflags & TH_SYN) && (thflags & TH_FIN) && V_drop_synfin) {
 		way_out = 4;
 		retval = 0;
+		m_freem(m);
 		goto done_with_input;
 	}
 	/*
@@ -10892,6 +10893,7 @@ rack_do_segment_nounlock(struct mbuf *m, struct tcphdr *th, struct socket *so,
 	    ((thflags & TH_RST) == 0) && (V_tcp_tolerate_missing_ts == 0)) {
 		way_out = 5;
 		retval = 0;
+		m_freem(m);
 		goto done_with_input;
 	}
 
@@ -11878,13 +11880,13 @@ static int
 rack_output(struct tcpcb *tp)
 {
 	struct socket *so;
-	uint32_t recwin;
+	uint32_t recwin = 0;
 	uint32_t sb_offset;
 	int32_t len, flags, error = 0;
 	struct mbuf *m;
 	struct mbuf *mb;
 	uint32_t if_hw_tsomaxsegcount = 0;
-	uint32_t if_hw_tsomaxsegsize;
+	uint32_t if_hw_tsomaxsegsize = 0;
 	int32_t segsiz, minseg;
 	long tot_len_this_send = 0;
 	struct ip *ip = NULL;
@@ -13485,15 +13487,6 @@ send:
 		    rack->rc_in_persist) {
 			th->th_seq = htonl(tp->snd_nxt);
 			rack_seq = tp->snd_nxt;
-		} else if (flags & TH_RST) {
-			/*
-			 * For a Reset send the last cum ack in sequence
-			 * (this like any other choice may still generate a
-			 * challenge ack, if a ack-update packet is in
-			 * flight).
-			 */
-			th->th_seq = htonl(tp->snd_una);
-			rack_seq = tp->snd_una;
 		} else {
 			th->th_seq = htonl(tp->snd_max);
 			rack_seq = tp->snd_max;

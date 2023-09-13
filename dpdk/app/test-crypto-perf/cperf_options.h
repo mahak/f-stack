@@ -79,7 +79,9 @@ enum cperf_op_type {
 	CPERF_AUTH_THEN_CIPHER,
 	CPERF_AEAD,
 	CPERF_PDCP,
-	CPERF_DOCSIS
+	CPERF_DOCSIS,
+	CPERF_IPSEC,
+	CPERF_ASYM_MODEX
 };
 
 extern const char *cperf_op_type_strs[];
@@ -101,6 +103,7 @@ struct cperf_options {
 	uint32_t out_of_place:1;
 	uint32_t silent:1;
 	uint32_t csv:1;
+	uint32_t is_outbound:1;
 
 	enum rte_crypto_cipher_algorithm cipher_algo;
 	enum rte_crypto_cipher_operation cipher_op;

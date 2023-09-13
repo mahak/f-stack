@@ -12,6 +12,11 @@ See Intel DPDK [linux_gsg](http://dpdk.org/doc/guides/linux_gsg/index.html)
 	mkdir /data/f-stack
 	git clone https://github.com/F-Stack/f-stack.git /data/f-stack
 
+## Install python and modules for running DPDK python scripts
+    pip3 install pyelftools --upgrade # RedHat/Centos
+    sudo apt install python # On ubuntu
+    #sudo pkg install python # On FreeBSD
+
 ## Compile DPDK
 
 Read DPDK Quick Started Guide or run the command below
@@ -83,7 +88,7 @@ The mount point can be made permanent across reboots, by adding the following li
 
 	cd app/redis-6.2.6/deps/jemalloc
 	./autogen.sh
-	cd app/redis-6.2.6/
+	cd ../..
 	make
 	# run with start.sh
 	./start.sh -b ./redis-server -o /path/to/redis.conf

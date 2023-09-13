@@ -18,7 +18,7 @@ const char *pmd_bond_init_valid_arguments[] = {
 	PMD_BOND_SOCKET_ID_KVARG,
 	PMD_BOND_MAC_ADDR_KVARG,
 	PMD_BOND_AGG_MODE_KVARG,
-	"driver",
+	RTE_DEVARGS_KEY_DRIVER,
 	NULL
 };
 
@@ -210,6 +210,12 @@ bond_ethdev_parse_socket_id_kvarg(const char *key __rte_unused,
 	socket_id = strtol(value, &endptr, 10);
 	if (*endptr != 0 || errno != 0)
 		return -1;
+
+	/* SOCKET_ID_ANY also consider a valid socket id */
+	if ((int8_t)socket_id == SOCKET_ID_ANY) {
+		*(int *)extra_args = SOCKET_ID_ANY;
+		return 0;
+	}
 
 	/* validate socket id value */
 	if (socket_id >= 0 && socket_id < RTE_MAX_NUMA_NODES) {

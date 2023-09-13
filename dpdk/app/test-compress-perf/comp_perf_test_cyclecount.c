@@ -467,7 +467,7 @@ cperf_cyclecount_test_runner(void *test_ctx)
 	struct cperf_cyclecount_ctx *ctx = test_ctx;
 	struct comp_test_data *test_data = ctx->ver.options;
 	uint32_t lcore = rte_lcore_id();
-	static rte_atomic16_t display_once = RTE_ATOMIC16_INIT(0);
+	static uint16_t display_once;
 	static rte_spinlock_t print_spinlock;
 	int i;
 
@@ -487,10 +487,12 @@ cperf_cyclecount_test_runner(void *test_ctx)
 
 	ctx->ver.mem.lcore_id = lcore;
 
+	uint16_t exp = 0;
 	/*
 	 * printing information about current compression thread
 	 */
-	if (rte_atomic16_test_and_set(&ctx->ver.mem.print_info_once))
+	if (__atomic_compare_exchange_n(&ctx->ver.mem.print_info_once, &exp,
+				1, 0, __ATOMIC_RELAXED,  __ATOMIC_RELAXED))
 		printf("    lcore: %u,"
 				" driver name: %s,"
 				" device name: %s,"
@@ -510,46 +512,64 @@ cperf_cyclecount_test_runner(void *test_ctx)
 	if (cperf_verify_test_runner(&ctx->ver))
 		return EXIT_FAILURE;
 
-	/*
-	 * Run the tests twice, discarding the first performance
-	 * results, before the cache is warmed up
-	 */
+	if (test_data->test_op & COMPRESS) {
+		/*
+		 * Run the test twice, discarding the first performance
+		 * results, before the cache is warmed up
+		 */
+		for (i = 0; i < 2; i++) {
+			if (main_loop(ctx, RTE_COMP_COMPRESS) < 0)
+				return EXIT_FAILURE;
+		}
 
-	/* C O M P R E S S */
-	for (i = 0; i < 2; i++) {
-		if (main_loop(ctx, RTE_COMP_COMPRESS) < 0)
-			return EXIT_FAILURE;
+		ops_enq_retries_comp = ctx->ops_enq_retries;
+		ops_deq_retries_comp = ctx->ops_deq_retries;
+
+		duration_enq_per_op_comp = ctx->duration_enq /
+				(ctx->ver.mem.total_bufs * test_data->num_iter);
+		duration_deq_per_op_comp = ctx->duration_deq /
+				(ctx->ver.mem.total_bufs * test_data->num_iter);
+	} else {
+		ops_enq_retries_comp = 0;
+		ops_deq_retries_comp = 0;
+
+		duration_enq_per_op_comp = 0;
+		duration_deq_per_op_comp = 0;
 	}
 
-	ops_enq_retries_comp = ctx->ops_enq_retries;
-	ops_deq_retries_comp = ctx->ops_deq_retries;
+	if (test_data->test_op & DECOMPRESS) {
+		/*
+		 * Run the test twice, discarding the first performance
+		 * results, before the cache is warmed up
+		 */
+		for (i = 0; i < 2; i++) {
+			if (main_loop(ctx, RTE_COMP_DECOMPRESS) < 0)
+				return EXIT_FAILURE;
+		}
 
-	duration_enq_per_op_comp = ctx->duration_enq /
-			(ctx->ver.mem.total_bufs * test_data->num_iter);
-	duration_deq_per_op_comp = ctx->duration_deq /
-			(ctx->ver.mem.total_bufs * test_data->num_iter);
+		ops_enq_retries_decomp = ctx->ops_enq_retries;
+		ops_deq_retries_decomp = ctx->ops_deq_retries;
 
-	/* D E C O M P R E S S */
-	for (i = 0; i < 2; i++) {
-		if (main_loop(ctx, RTE_COMP_DECOMPRESS) < 0)
-			return EXIT_FAILURE;
+		duration_enq_per_op_decomp = ctx->duration_enq /
+				(ctx->ver.mem.total_bufs * test_data->num_iter);
+		duration_deq_per_op_decomp = ctx->duration_deq /
+				(ctx->ver.mem.total_bufs * test_data->num_iter);
+	} else {
+		ops_enq_retries_decomp = 0;
+		ops_deq_retries_decomp = 0;
+
+		duration_enq_per_op_decomp = 0;
+		duration_deq_per_op_decomp = 0;
 	}
-
-	ops_enq_retries_decomp = ctx->ops_enq_retries;
-	ops_deq_retries_decomp = ctx->ops_deq_retries;
-
-	duration_enq_per_op_decomp = ctx->duration_enq /
-			(ctx->ver.mem.total_bufs * test_data->num_iter);
-	duration_deq_per_op_decomp = ctx->duration_deq /
-			(ctx->ver.mem.total_bufs * test_data->num_iter);
 
 	duration_setup_per_op = ctx->duration_op /
 			(ctx->ver.mem.total_bufs * test_data->num_iter);
 
 	/* R E P O R T processing */
-	if (rte_atomic16_test_and_set(&display_once)) {
+	rte_spinlock_lock(&print_spinlock);
 
-		rte_spinlock_lock(&print_spinlock);
+	if (display_once == 0) {
+		display_once = 1;
 
 		printf("\nLegend for the table\n"
 		"  - Retries section: number of retries for the following operations:\n"
@@ -558,7 +578,7 @@ cperf_cyclecount_test_runner(void *test_ctx)
 		"    [D-e] - decompression enqueue\n"
 		"    [D-d] - decompression dequeue\n"
 		"  - Cycles section: number of cycles per 'op' for the following operations:\n"
-		"    setup/op - memory allocation, op configuration and memory dealocation\n"
+		"    setup/op - memory allocation, op configuration and memory deallocation\n"
 		"    [C-e] - compression enqueue\n"
 		"    [C-d] - compression dequeue\n"
 		"    [D-e] - decompression enqueue\n"
@@ -577,11 +597,7 @@ cperf_cyclecount_test_runner(void *test_ctx)
 			"setup/op",
 			"[C-e]", "[C-d]",
 			"[D-e]", "[D-d]");
-
-		rte_spinlock_unlock(&print_spinlock);
 	}
-
-	rte_spinlock_lock(&print_spinlock);
 
 	printf("%12u"
 	       "%6u"

@@ -42,7 +42,7 @@ To configure a DPDK build use:
 
 .. code-block:: console
 
-     meson <options> build
+     meson setup <options> build
 
 where "build" is the desired output build directory, and "<options>" can be
 empty or one of a number of meson or DPDK-specific build options, described
@@ -89,7 +89,36 @@ to a regular "debug" build, you can either:
 * run ``meson configure -Dbuildtype=debug`` inside the build folder after the initial meson run.
 
 Other options are specific to the DPDK project but can be adjusted similarly.
-To set the "max_lcores" value to 256, for example, you can either:
+The "platform" option specifies a set a configuration parameters that will be used.
+The valid values are:
+
+* ``-Dplatform=native`` will tailor the configuration to the build machine.
+
+* ``-Dplatform=generic`` will use configuration that works on all machines
+  of the same architecture as the build machine.
+
+* ``-Dplatform=<SoC>`` will use configuration optimized for a particular SoC.
+  Consult the "socs" dictionary in ``config/arm/meson.build`` to see which
+  SoCs are supported.
+
+The instruction set will be set automatically by default according to these rules:
+
+* ``-Dplatform=native`` sets ``cpu_instruction_set`` to ``native``,
+  which configures ``-march`` (x86_64), ``-mcpu`` (ppc), ``-mtune`` (ppc) to ``native``.
+
+* ``-Dplatform=generic`` sets ``cpu_instruction_set`` to ``generic``,
+  which configures ``-march`` (x86_64), ``-mcpu`` (ppc), ``-mtune`` (ppc) to
+  a common minimal baseline needed for DPDK.
+
+To override what instruction set will be used, set the ``cpu_instruction_set``
+parameter to the instruction set of your choice (such as ``corei7``, ``power8``, etc.).
+
+``cpu_instruction_set`` is not used in Arm builds, as setting the instruction set
+without other parameters leads to inferior builds. The way to tailor Arm builds
+is to build for a SoC using ``-Dplatform=<SoC>`` mentioned above.
+
+The values determined by the ``platform`` parameter may be overwritten.
+For example, to set the ``max_lcores`` value to 256, you can either:
 
 * pass ``-Dmax_lcores=256`` to meson when configuring the build folder initially
 
@@ -100,7 +129,7 @@ automatically built as part of a meson build too.
 To do so, pass a comma-separated list of the examples to build to the
 `-Dexamples` meson option as below::
 
-  meson -Dexamples=l2fwd,l3fwd build
+  meson setup -Dexamples=l2fwd,l3fwd build
 
 As with other meson options, this can also be set post-initial-config using `meson configure` in the build directory.
 There is also a special value "all" to request that all example applications whose
@@ -126,12 +155,12 @@ The following meson command can be used on RHEL/Fedora systems to configure a 32
 assuming the relevant 32-bit development packages, such as a 32-bit libc, are installed::
 
   PKG_CONFIG_LIBDIR=/usr/lib/pkgconfig \
-      meson -Dc_args='-m32' -Dc_link_args='-m32' build
+      meson setup -Dc_args='-m32' -Dc_link_args='-m32' build
 
 For Debian/Ubuntu systems, the equivalent command is::
 
   PKG_CONFIG_LIBDIR=/usr/lib/i386-linux-gnu/pkgconfig \
-      meson -Dc_args='-m32' -Dc_link_args='-m32' build
+      meson setup -Dc_args='-m32' -Dc_link_args='-m32' build
 
 Once the build directory has been configured,
 DPDK can be compiled using ``ninja`` as described above.

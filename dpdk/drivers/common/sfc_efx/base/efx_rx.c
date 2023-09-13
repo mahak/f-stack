@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: BSD-3-Clause
  *
- * Copyright(c) 2019-2020 Xilinx, Inc.
+ * Copyright(c) 2019-2021 Xilinx, Inc.
  * Copyright(c) 2007-2019 Solarflare Communications Inc.
  */
 
@@ -896,8 +896,10 @@ efx_rx_qcreate_internal(
 
 		rss_hash_field =
 		    &erplp->erpl_fields[EFX_RX_PREFIX_FIELD_RSS_HASH];
-		if (rss_hash_field->erpfi_width_bits == 0)
+		if (rss_hash_field->erpfi_width_bits == 0) {
+			rc = ENOTSUP;
 			goto fail5;
+		}
 	}
 
 	enp->en_rx_qcount++;
@@ -1743,14 +1745,20 @@ siena_rx_qcreate(
 		goto fail2;
 	}
 
-	if (flags & EFX_RXQ_FLAG_SCATTER) {
 #if EFSYS_OPT_RX_SCATTER
-		jumbo = B_TRUE;
+#define SUPPORTED_RXQ_FLAGS EFX_RXQ_FLAG_SCATTER
 #else
+#define SUPPORTED_RXQ_FLAGS EFX_RXQ_FLAG_NONE
+#endif
+	/* Reject flags for unsupported queue features */
+	if ((flags & ~SUPPORTED_RXQ_FLAGS) != 0) {
 		rc = EINVAL;
 		goto fail3;
-#endif	/* EFSYS_OPT_RX_SCATTER */
 	}
+#undef SUPPORTED_RXQ_FLAGS
+
+	if (flags & EFX_RXQ_FLAG_SCATTER)
+		jumbo = B_TRUE;
 
 	/* Set up the new descriptor queue */
 	EFX_POPULATE_OWORD_7(oword,
@@ -1769,10 +1777,8 @@ siena_rx_qcreate(
 
 	return (0);
 
-#if !EFSYS_OPT_RX_SCATTER
 fail3:
 	EFSYS_PROBE(fail3);
-#endif
 fail2:
 	EFSYS_PROBE(fail2);
 fail1:

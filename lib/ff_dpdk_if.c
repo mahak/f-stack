@@ -705,6 +705,9 @@ init_port_start(void)
                     port_conf.txmode.offloads |= DEV_TX_OFFLOAD_TCP_TSO;
                     pconf->hw_features.tx_tso = 1;
                 }
+                else {
+                    printf("TSO is not supported\n");
+                }
             } else {
                 printf("TSO is disabled\n");
             }
@@ -839,7 +842,7 @@ init_clock(void)
     return 0;
 }
 
-#ifdef FF_FLOW_ISOLATE
+#if defined(FF_FLOW_ISOLATE) || defined(FF_FDIR)
 /** Print a message out of a flow error. */
 static int
 port_flow_complain(struct rte_flow_error *error)
@@ -880,7 +883,10 @@ port_flow_complain(struct rte_flow_error *error)
            rte_strerror(err));
     return -err;
 }
+#endif
 
+
+#ifdef FF_FLOW_ISOLATE
 static int
 port_flow_isolate(uint16_t port_id, int set)
 {
@@ -1046,6 +1052,110 @@ init_flow(uint16_t port_id, uint16_t tcp_port) {
 
 #endif
 
+#ifdef FF_FDIR
+/*
+ * Flow director allows the traffic to specific port to be processed on the
+ * specific queue. Unlike FF_FLOW_ISOLATE, the FF_FDIR implementation uses
+ * general flow rule so that most FDIR supported NIC will support. The best
+ * using case of FDIR is (but not limited to), using multiple processes to
+ * listen on different ports.
+ *
+ * This function can be called either in FSTACK or in end-application. 
+ *
+ * Example:
+ *  Given 2 fstack instances A and B. Instance A listens on port 80, and
+ *  instance B listens on port 81. We want to process the traffic to port 80
+ *  on rx queue 0, and the traffic to port 81 on rx queue 1. 
+ *  // port 80 rx queue 0
+ *  ret = fdir_add_tcp_flow(port_id, 0, FF_FLOW_INGRESS, 0, 80);
+ *  // port 81 rx queue 1
+ *  ret = fdir_add_tcp_flow(port_id, 1, FF_FLOW_INGRESS, 0, 81);
+ */
+#define FF_FLOW_EGRESS		1
+#define FF_FLOW_INGRESS		2
+/**
+ * Create a flow rule that moves packets with matching src and dest tcp port 
+ * to the target queue. 
+ * 
+ * This function uses general flow rules and doesn't rely on the flow_isolation
+ * that not all the FDIR capable NIC support.
+ *
+ * @param port_id
+ *   The selected port.
+ * @param queue 
+ *   The target queue.
+ * @param dir 
+ *   The direction of the traffic. 
+ *   1 for egress, 2 for ingress and sum(1+2) for both. 
+ * @param tcp_sport 
+ *   The src tcp port to match.
+ * @param tcp_dport
+ *   The dest tcp port to match.
+ *
+ */
+static int
+fdir_add_tcp_flow(uint16_t port_id, uint16_t queue, uint16_t dir, 
+		uint16_t tcp_sport, uint16_t tcp_dport)
+{
+    struct rte_flow_attr attr;
+    struct rte_flow_item flow_pattern[4];
+    struct rte_flow_action flow_action[2];
+    struct rte_flow *flow = NULL;
+    struct rte_flow_action_queue flow_action_queue = { .index = queue };
+    struct rte_flow_item_tcp tcp_spec;
+    struct rte_flow_item_tcp tcp_mask;
+    struct rte_flow_error rfe;
+    int res;
+
+    memset(flow_pattern, 0, sizeof(flow_pattern));
+    memset(flow_action, 0, sizeof(flow_action));
+
+    /*
+     * set the rule attribute.
+     */
+    memset(&attr, 0, sizeof(struct rte_flow_attr));
+    attr.ingress = ((dir & FF_FLOW_INGRESS) > 0);
+    attr.egress = ((dir & FF_FLOW_EGRESS) > 0); 
+
+    /*
+     * create the action sequence.
+     * one action only, move packet to queue
+     */
+    flow_action[0].type = RTE_FLOW_ACTION_TYPE_QUEUE;
+    flow_action[0].conf = &flow_action_queue;
+    flow_action[1].type = RTE_FLOW_ACTION_TYPE_END;
+
+    flow_pattern[0].type = RTE_FLOW_ITEM_TYPE_ETH;
+    flow_pattern[1].type = RTE_FLOW_ITEM_TYPE_IPV4;
+
+    /*
+     * set the third level of the pattern (TCP).
+     */
+    memset(&tcp_spec, 0, sizeof(struct rte_flow_item_tcp));
+    memset(&tcp_mask, 0, sizeof(struct rte_flow_item_tcp));
+    tcp_spec.hdr.src_port = htons(tcp_sport);
+    tcp_mask.hdr.src_port = (tcp_sport == 0 ? 0: 0xffff); 
+    tcp_spec.hdr.dst_port = htons(tcp_dport);
+    tcp_mask.hdr.dst_port = (tcp_dport == 0 ? 0: 0xffff);
+    flow_pattern[2].type = RTE_FLOW_ITEM_TYPE_TCP;
+    flow_pattern[2].spec = &tcp_spec;
+    flow_pattern[2].mask = &tcp_mask;
+
+    flow_pattern[3].type = RTE_FLOW_ITEM_TYPE_END;
+
+    res = rte_flow_validate(port_id, &attr, flow_pattern, flow_action, &rfe);
+    if (res)
+	return (1);
+
+    flow = rte_flow_create(port_id, &attr, flow_pattern, flow_action, &rfe);
+    if (!flow) 
+	return port_flow_complain(&rfe);
+
+    return (0);
+}
+
+#endif
+
 int
 ff_dpdk_init(int argc, char **argv)
 {
@@ -1114,6 +1224,16 @@ ff_dpdk_init(int argc, char **argv)
         rte_exit(EXIT_FAILURE, "init_port_flow failed\n");
     }
 #endif
+
+#ifdef FF_FDIR
+    /*
+     * Refer function header section for usage.
+     */
+    ret = fdir_add_tcp_flow(0, 0, FF_FLOW_INGRESS, 0, 80);
+    if (ret)
+	rte_exit(EXIT_FAILURE, "fdir_add_tcp_flow failed\n");
+#endif
+
     return 0;
 }
 
@@ -1122,7 +1242,7 @@ ff_veth_input(const struct ff_dpdk_if_context *ctx, struct rte_mbuf *pkt)
 {
     uint8_t rx_csum = ctx->hw_features.rx_csum;
     if (rx_csum) {
-        if (pkt->ol_flags & (PKT_RX_IP_CKSUM_BAD | PKT_RX_L4_CKSUM_BAD)) {
+        if (pkt->ol_flags & (RTE_MBUF_F_RX_IP_CKSUM_BAD | RTE_MBUF_F_RX_L4_CKSUM_BAD)) {
             rte_pktmbuf_free(pkt);
             return;
         }
@@ -1137,7 +1257,7 @@ ff_veth_input(const struct ff_dpdk_if_context *ctx, struct rte_mbuf *pkt)
         return;
     }
 
-    if (pkt->ol_flags & PKT_RX_VLAN_STRIPPED) {
+    if (pkt->ol_flags & RTE_MBUF_F_RX_VLAN_STRIPPED) {
         ff_mbuf_set_vlan_info(hdr, pkt->vlan_tci);
     }
 
@@ -1267,6 +1387,24 @@ pktmbuf_deep_clone(const struct rte_mbuf *md,
 }
 
 static inline void
+ff_add_vlan_tag(struct rte_mbuf * rtem)
+{
+    void *data = NULL;
+
+    if (rtem->ol_flags & RTE_MBUF_F_RX_VLAN_STRIPPED) {
+        data = rte_pktmbuf_prepend(rtem, sizeof(struct rte_vlan_hdr));
+        if (data != NULL) {
+            memmove(data, data + sizeof(struct rte_vlan_hdr), RTE_ETHER_HDR_LEN);
+            struct rte_ether_hdr *etherhdr = (struct rte_ether_hdr *)data;
+            struct rte_vlan_hdr *vlanhdr = (struct rte_vlan_hdr *)(data + RTE_ETHER_HDR_LEN);
+            vlanhdr->vlan_tci = rte_cpu_to_be_16(rtem->vlan_tci);
+            vlanhdr->eth_proto = etherhdr->ether_type;
+            etherhdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
+        }
+    }
+}
+
+static inline void
 process_packets(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **bufs,
     uint16_t count, const struct ff_dpdk_if_context *ctx, int pkts_from_ring)
 {
@@ -1297,21 +1435,10 @@ process_packets(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **bufs,
             usr_cb_tsc += rte_rdtsc() - cur_tsc;
             if (ret == FF_DISPATCH_RESPONSE) {
                 rte_pktmbuf_pkt_len(rtem) = rte_pktmbuf_data_len(rtem) = len;
-
                 /*
                  * We have not support vlan out strip
                  */
-                if (rtem->vlan_tci) {
-                    data = rte_pktmbuf_prepend(rtem, sizeof(struct rte_vlan_hdr));
-                    if (data != NULL) {
-                        memmove(data, data + sizeof(struct rte_vlan_hdr), RTE_ETHER_HDR_LEN);
-                        struct rte_ether_hdr *etherhdr = (struct rte_ether_hdr *)data;
-                        struct rte_vlan_hdr *vlanhdr = (struct rte_vlan_hdr *)(data + RTE_ETHER_HDR_LEN);
-                        vlanhdr->vlan_tci = rte_cpu_to_be_16(rtem->vlan_tci);
-                        vlanhdr->eth_proto = etherhdr->ether_type;
-                        etherhdr->ether_type = rte_cpu_to_be_16(RTE_ETHER_TYPE_VLAN);
-                    }
-                }
+                ff_add_vlan_tag(rtem);
                 send_single_packet(rtem, port_id);
                 continue;
             }
@@ -1365,6 +1492,7 @@ process_packets(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **bufs,
                 mbuf_pool = pktmbuf_pool[qconf->socket_id];
                 mbuf_clone = pktmbuf_deep_clone(rtem, mbuf_pool);
                 if(mbuf_clone) {
+                    ff_add_vlan_tag(mbuf_clone);
                     ff_kni_enqueue(port_id, mbuf_clone);
                 }
             }
@@ -1373,6 +1501,7 @@ process_packets(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **bufs,
 #ifdef FF_KNI
         } else if (enable_kni) {
             if (knictl_action == FF_KNICTL_ACTION_ALL_TO_KNI){
+                ff_add_vlan_tag(rtem);
                 ff_kni_enqueue(port_id, rtem);
             } else if (knictl_action == FF_KNICTL_ACTION_ALL_TO_FF){
                 ff_veth_input(ctx, rtem);
@@ -1380,7 +1509,8 @@ process_packets(uint16_t port_id, uint16_t queue_id, struct rte_mbuf **bufs,
                 if (enable_kni &&
                         ((filter == FILTER_KNI && kni_accept) ||
                         (filter == FILTER_UNKNOWN && !kni_accept)) ) {
-                        ff_kni_enqueue(port_id, rtem);
+                    ff_add_vlan_tag(rtem);
+                    ff_kni_enqueue(port_id, rtem);
                 } else {
                     ff_veth_input(ctx, rtem);
                 }
@@ -1765,7 +1895,7 @@ ff_dpdk_if_send(struct ff_dpdk_if_context *ctx, void *m,
         iph = (struct rte_ipv4_hdr *)(data + RTE_ETHER_HDR_LEN);
         iph_len = (iph->version_ihl & 0x0f) << 2;
 
-        head->ol_flags |= PKT_TX_IP_CKSUM | PKT_TX_IPV4;
+        head->ol_flags |= RTE_MBUF_F_TX_IP_CKSUM | RTE_MBUF_F_TX_IPV4;
         head->l2_len = RTE_ETHER_HDR_LEN;
         head->l3_len = iph_len;
     }
@@ -1777,7 +1907,7 @@ ff_dpdk_if_send(struct ff_dpdk_if_context *ctx, void *m,
         iph_len = (iph->version_ihl & 0x0f) << 2;
 
         if (offload.tcp_csum) {
-            head->ol_flags |= PKT_TX_TCP_CKSUM;
+            head->ol_flags |= RTE_MBUF_F_TX_TCP_CKSUM;
             head->l2_len = RTE_ETHER_HDR_LEN;
             head->l3_len = iph_len;
         }
@@ -1802,15 +1932,15 @@ ff_dpdk_if_send(struct ff_dpdk_if_context *ctx, void *m,
             int tcph_len;
             tcph = (struct rte_tcp_hdr *)((char *)iph + iph_len);
             tcph_len = (tcph->data_off & 0xf0) >> 2;
-            tcph->cksum = rte_ipv4_phdr_cksum(iph, PKT_TX_TCP_SEG);
+            tcph->cksum = rte_ipv4_phdr_cksum(iph, RTE_MBUF_F_TX_TCP_SEG);
 
-            head->ol_flags |= PKT_TX_TCP_SEG;
+            head->ol_flags |= RTE_MBUF_F_TX_TCP_SEG;
             head->l4_len = tcph_len;
             head->tso_segsz = offload.tso_seg_size;
         }
 
         if (offload.udp_csum) {
-            head->ol_flags |= PKT_TX_UDP_CKSUM;
+            head->ol_flags |= RTE_MBUF_F_TX_UDP_CKSUM;
             head->l2_len = RTE_ETHER_HDR_LEN;
             head->l3_len = iph_len;
         }
